@@ -1,0 +1,32 @@
+name: Rescue AMR Project CI
+
+# 언제 이 CI 가상 컴퓨터를 깨울지 지정합니다.
+on:
+  push:
+    branches: [ main, develop ]      # main 또는 develop 브랜치에 직접 push될 때
+  pull_request:
+    branches: [ main, develop ]      # main 또는 develop 브랜치로 PR이 열릴 때
+
+jobs:
+  pytest-backend:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest httpx
+        if [ -f database/requirements.txt ]; then pip install -r database/requirements.txt; fi
+
+    - name: Run backend tests with pytest
+      run: |
+        cd database
+        pytest
