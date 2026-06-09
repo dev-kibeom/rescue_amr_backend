@@ -1,90 +1,152 @@
 #!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 import requests
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
+from nav_msgs.msg import Odometry
 from interfaces.msg import TargetPose
+
+FLASK_BASE = "http://127.0.0.1:8001/api"
+
+# 로봇 ID — ros-args로 덮어쓸 수 있음
+# 예: ros2 run rescue_bt_manager bt_db_bridge --ros-args -p robot_id:=robot2
+ROBOT_ID_DEFAULT = "robot1"
+
+# TurtleBot4 위치 토픽 우선순위
+#   1) /robot_pose          (turtlebot4_navigation이 퍼블리시, 가장 정확)
+#   2) /amcl_pose           (Nav2 AMCL localization)
+#   3) /odom                (wheel odometry, drift 있음)
+POSE_TOPIC_PRIORITY = [
+    ("/robot_pose",  PoseStamped,                  "pose.position"),
+    ("/amcl_pose",   PoseWithCovarianceStamped,     "pose.pose.position"),
+    ("/odom",        Odometry,                      "pose.pose.position"),
+]
+
+def _extract_xy(msg, path: str):
+    """도트 경로로 중첩 속성 접근"""
+    obj = msg
+    for attr in path.split("."):
+        obj = getattr(obj, attr)
+    return float(obj.x), float(obj.y)
+
 
 class BtDbBridge(Node):
     def __init__(self):
         super().__init__("bt_db_bridge")
 
-        # 센서 데이터 및 가짜 토픽이 어떤 QoS로 날아오든 가리지 않고 다 받아먹는 마스터 QoS 설정
-        yolo_qos = QoSProfile(
-            reliability=ReliabilityPolicy.BEST_EFFORT,  # 또는 RELIABLE 둘 다 자동 매칭 호환
+        # 로봇 ID 파라미터
+        self.declare_parameter("robot_id", ROBOT_ID_DEFAULT)
+        self.robot_id = self.get_parameter("robot_id").get_parameter_value().string_value
+
+        # 범용 QoS (센서/네비게이션 토픽 모두 수신)
+        sensor_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
             history=HistoryPolicy.KEEP_LAST,
-            depth=10,
+            depth=5,
         )
 
+        # ── 기존 구독 ──────────────────────────────────────────────────────────
         self.bt_sub = self.create_subscription(
             PoseStamped, "/report/survivor_found", self.bt_report_callback, 10
         )
-
-        # qos_profile 인자 적용
         self.yolo_sub = self.create_subscription(
-            TargetPose,
-            "/yolo/target_pose",
-            self.yolo_detection_callback,
-            qos_profile=yolo_qos,
+            TargetPose, "/yolo/target_pose", self.yolo_detection_callback,
+            qos_profile=sensor_qos,
         )
 
-        # Flask 백엔드 서버 주소
-        self.bt_flask_url = "http://127.0.0.1:8001/api/robots/robot1/nav_success"
-        self.yolo_flask_url = "http://127.0.0.1:8001/api/logs"
+        # ── 로봇 위치 구독 (우선순위 순서대로 시도) ────────────────────────────
+        self._pose_sub = None
+        self._pose_active_topic = None
+        self._try_pose_topics(sensor_qos)
+
+        # ── 1초마다 상태 DB 동기화 타이머 ─────────────────────────────────────
+        self._last_x: float = 0.0
+        self._last_y: float = 0.0
+        self._pose_received = False
+        self.create_timer(1.0, self._pose_heartbeat)
+
         self.get_logger().info(
-            "✅ [ARES 브릿지] BT-to-DB 미션로그 브릿지 노드가 시작되었습니다."
+            f"✅ [ARES 브릿지] 시작 — robot_id={self.robot_id}"
         )
 
+    # ── 위치 토픽 탐색 ─────────────────────────────────────────────────────────
+    def _try_pose_topics(self, qos):
+        """ros2 topic list에서 사용 가능한 토픽을 순서대로 시도"""
+        for topic, msg_type, path in POSE_TOPIC_PRIORITY:
+            try:
+                self._pose_sub = self.create_subscription(
+                    msg_type, topic,
+                    lambda msg, p=path: self._pose_callback(msg, p),
+                    qos_profile=qos,
+                )
+                self._pose_active_topic = topic
+                self.get_logger().info(f"📍 위치 토픽 구독: {topic}")
+                break
+            except Exception as e:
+                self.get_logger().warn(f"⚠️  {topic} 구독 실패, 다음 시도: {e}")
+
+    def _pose_callback(self, msg, path: str):
+        try:
+            x, y = _extract_xy(msg, path)
+            self._last_x = x
+            self._last_y = y
+            self._pose_received = True
+        except Exception as e:
+            self.get_logger().warn(f"위치 파싱 오류: {e}")
+
+    def _pose_heartbeat(self):
+        """1초마다 로봇 위치·상태를 DB에 동기화"""
+        if not self._pose_received:
+            return  # 아직 위치 수신 전이면 스킵
+
+        data = {
+            "x":      self._last_x,
+            "y":      self._last_y,
+            "status": "MOVING",   # BT가 돌고 있으면 MOVING
+        }
+        self._send_to_flask(
+            f"{FLASK_BASE}/robots/{self.robot_id}/pose", data, "위치 동기화"
+        )
+
+    # ── 기존 콜백 ──────────────────────────────────────────────────────────────
     def bt_report_callback(self, msg: PoseStamped):
-        self.get_logger().warn(
-            "🚨 [BT 이벤트 발생] Behavior Tree로부터 최종 구조 임무 보고 수신!"
-        )
-
-        # 가독성을 위해 현재 좌표 추출
+        self.get_logger().warn("🚨 [BT 이벤트] 최종 구조 임무 보고 수신")
         x = msg.pose.position.x
         y = msg.pose.position.y
-
-        # Flask 백엔드 규격에 맞게 데이터 조립
         data = {
             "x": x,
             "y": y,
             "message": "<span style='color:#2ecc71; font-weight:bold;'>[임무 성공]</span> BT 시퀀스 완료: 생존자 위치 확보",
         }
-
-        self._send_to_flask(self.bt_flask_url, data, "BT 임무완료")
+        self._send_to_flask(
+            f"{FLASK_BASE}/robots/{self.robot_id}/nav_success", data, "BT 임무완료"
+        )
 
     def yolo_detection_callback(self, msg: TargetPose):
-        """🚀 YOLO 3D 전역 좌표 탐지 신호 처리"""
-        self.get_logger().warn("🚀 콜백 함수 진입 성공! 데이터 수신됨")
-
-        x = msg.pose.position.x
-        y = msg.pose.position.y
-        
-        # survivor_logs 테이블에 저장할 데이터 구조로 변환
+        self.get_logger().warn("🚀 YOLO 탐지 수신")
         data = {
-            "id": msg.class_name,  # 주민번호 또는 고유식별 번호
-            "detected_x": x,
-            "detected_y": y,
-            "similarity": float(msg.confidence),  # 얼굴 일치도 (0.0 ~ 1.0)
-            "robot_id": "robot1",
-            "img_path": f"/workspace/app/static/img/captured/{msg.class_name}.jpg",  # 현장 증거 사진 가상 경로
+            "id":         msg.class_name,
+            "detected_x": msg.pose.position.x,
+            "detected_y": msg.pose.position.y,
+            "similarity": float(msg.confidence),
+            "robot_id":   self.robot_id,
+            "img_path":   f"/workspace/app/static/img/captured/{msg.class_name}.jpg",
         }
+        self._send_to_flask(f"{FLASK_BASE}/survivor-logs", data, "AI 대상자 식별")
 
-        self._send_to_flask("http://127.0.0.1:8001/api/survivor-logs", data, f"AI 대상자 식별")
-
+    # ── 공통 HTTP 유틸 ────────────────────────────────────────────────────────
     def _send_to_flask(self, url, data, label):
-        """HTTP POST 요청 공통 처리 유틸리티"""
         try:
-            response = requests.post(url, json=data, timeout=1.0)
-            if response.status_code in [200, 201]:
-                self.get_logger().info(f"🎯 Flask DB 동기화 성공 ({label})")
+            res = requests.post(url, json=data, timeout=1.0)
+            if res.status_code in [200, 201]:
+                self.get_logger().info(f"🎯 DB 동기화 성공 ({label})")
             else:
-                self.get_logger().error(
-                    f"⚠️ 백엔드 수신 거부 ({response.status_code}): {response.text}"
-                )
+                self.get_logger().error(f"⚠️  백엔드 거부 {res.status_code} ({label}): {res.text}")
         except Exception as e:
-            self.get_logger().error(f"❌ Flask 백엔드 서버 통신 실패 ({label}): {e}")
+            self.get_logger().error(f"❌ Flask 통신 실패 ({label}): {e}")
+
 
 def main(args=None):
     rclpy.init(args=args)

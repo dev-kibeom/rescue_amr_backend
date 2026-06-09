@@ -23,3 +23,26 @@ class Turtlebot4Service:
             message=f"<span class='highlight'>{robot_id}</span> {message} (x:{x:.1f}, y:{y:.1f})",
         )
         Turtlebot4Repository.create_log(new_log)
+
+    @staticmethod
+    def update_pose(robot_id: str, x: float, y: float, status: str = None):
+        """로봇 위치·상태 upsert — 없으면 신규 생성, 있으면 갱신"""
+        robot = Turtlebot4Repository.get_robot_by_id(robot_id)
+        if not robot:
+            robot = RescueRobot(id=robot_id)
+        robot.pos_x = x
+        robot.pos_y = y
+        if status:
+            robot.status = status
+        Turtlebot4Repository.save_robot(robot)
+
+    @staticmethod
+    def update_exploration(robot_id: str, explored_area: float, total_area: float):
+        """탐사 완료율 갱신 — 100% 도달 시 SUCCESS로 전환"""
+        robot = Turtlebot4Repository.get_robot_by_id(robot_id)
+        if not robot:
+            robot = RescueRobot(id=robot_id)
+        if total_area > 0:
+            pct = explored_area / total_area
+            robot.status = "SUCCESS" if pct >= 1.0 else "MOVING"
+        Turtlebot4Repository.save_robot(robot)

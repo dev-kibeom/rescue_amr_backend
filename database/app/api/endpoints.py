@@ -7,6 +7,31 @@ from app.models.database import IncidentLog, Survivor, SurvivorLog, db
 api_bp = Blueprint("api", __name__)
 
 
+@api_bp.route("/robots/<robot_id>/pose", methods=["POST"])
+def update_robot_pose(robot_id):
+    """로봇 위치·상태 주기 업데이트 — bt_db_bridge에서 1초마다 호출"""
+    data = request.get_json()
+    Turtlebot4Service.update_pose(
+        robot_id=robot_id,
+        x=data.get("x", 0.0),
+        y=data.get("y", 0.0),
+        status=data.get("status"),
+    )
+    return jsonify({"ok": True}), 200
+
+
+@api_bp.route("/robots/<robot_id>/exploration", methods=["POST"])
+def update_robot_exploration(robot_id):
+    """탐사 면적 업데이트 — bt_db_bridge에서 /map 분석 후 호출"""
+    data = request.get_json()
+    Turtlebot4Service.update_exploration(
+        robot_id=robot_id,
+        explored_area=data.get("explored_area", 0.0),
+        total_area=data.get("total_area", 1.0),
+    )
+    return jsonify({"ok": True}), 200
+
+
 @api_bp.route("/robots/<robot_id>/nav_success", methods=["POST"])
 def handle_nav_success(robot_id):
     data = request.get_json()
@@ -156,19 +181,56 @@ def identify_survivor():
         return jsonify({"status": "success", "matched": False, "message": str(e)}), 200
 
 
-@api_bp.route("/robots", methods=["GET"])
-def get_robots():
-    """rescue_robots 테이블 전체 조회 — 맵 위치 및 상태 실시간 제공"""
-    robots = RescueRobot.query.all()
+@api_bp.route("/survivors", methods=["GET"])
+def get_survivors():
+    """survivors 테이블 전체 조회 — face URL 포함, WorkerPage용"""
+    from app.models.database import Survivor
+    survivors = Survivor.query.all()
     return jsonify([
         {
-            "id": r.id,
-            "status": r.status,
-            "pos_x": r.pos_x,
-            "pos_y": r.pos_y,
+            "id": s.id,
+            "name": s.name,
+            "sex": s.sex,
+            "phone_number": s.phone_number,
+            "face": s.face,          # Supabase Storage URL (없으면 null)
         }
-        for r in robots
+        for s in survivors
     ]), 200
+
+
+@api_bp.route("/robots", methods=["GET"])
+def get_robots():
+    """rescue_robots 테이블 전체 조회 — 맵 위치 및 상태 실시간 제공
+
+    db_status 값:
+      ok    — 로봇 데이터 정상 존재
+      empty — DB 연결은 됐지만 등록된 로봇 없음 (bt_db_bridge 미실행 가능성)
+      error — PostgreSQL 쿼리 자체 실패 (DB 연결 끊김 등)
+    """
+    try:
+        robots = RescueRobot.query.all()
+        db_status = "ok" if robots else "empty"
+        return jsonify({
+            "db_status": db_status,
+            "robots": [
+                {
+                    "id": r.id,
+                    "status": r.status,
+                    "pos_x": r.pos_x,
+                    "pos_y": r.pos_y,
+                    "explored_area": r.explored_area,
+                    "total_area": r.total_area,
+                }
+                for r in robots
+            ]
+        }), 200
+    except Exception as e:
+        # 500 대신 200 반환 — 프론트가 항상 JSON 파싱 가능하도록
+        return jsonify({
+            "db_status": "error",
+            "detail": str(e),
+            "robots": []
+        }), 200
 
 
 @api_bp.route("/survivor-logs", methods=["GET"])
