@@ -25,6 +25,7 @@ class RescueRobot(db.Model):
     __tablename__ = "rescue_robots"
     id = db.Column(db.String, primary_key=True, index=True)
     status = db.Column(db.String, default="IDLE")  # IDLE, MOVING, SUCCESS, ERROR
+    battery = db.Column(db.Integer, nullable=True)
     pos_x = db.Column(db.Float, nullable=True)
     pos_y = db.Column(db.Float, nullable=True)
 
@@ -40,7 +41,7 @@ class IncidentLog(db.Model):
 class Survivor(db.Model):
     __tablename__ = "survivors"
 
-    # 실제 소방 규격이나 고유 식별 번호 확장을 고려해 String(Varchar)으로 셋팅
+    # 실제 소방 규격이나 주민등록번호 확장을 고려해 String(Varchar)으로 셋팅
     id = db.Column(db.String(50), primary_key=True, index=True)
     name = db.Column(db.String(50), nullable=False)
     sex = db.Column(db.String(10), nullable=True)

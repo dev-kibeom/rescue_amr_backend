@@ -156,6 +156,49 @@ def identify_survivor():
         return jsonify({"status": "success", "matched": False, "message": str(e)}), 200
 
 
+@api_bp.route("/robots", methods=["GET"])
+def get_robots():
+    """rescue_robots 테이블 전체 조회 — 맵 위치 및 상태 실시간 제공"""
+    robots = RescueRobot.query.all()
+    return jsonify([
+        {
+            "id": r.id,
+            "status": r.status,
+            "pos_x": r.pos_x,
+            "pos_y": r.pos_y,
+        }
+        for r in robots
+    ]), 200
+
+
+@api_bp.route("/survivor-logs", methods=["GET"])
+def get_survivor_logs():
+    """survivor_logs 테이블 최근 조회 — 구조활동 기록 페이지용"""
+    from app.models.database import SurvivorLog, Survivor
+    limit = request.args.get("limit", 50, type=int)
+    rows = (
+        SurvivorLog.query
+        .order_by(SurvivorLog.detection_time.desc())
+        .limit(limit)
+        .all()
+    )
+    result = []
+    for row in rows:
+        survivor = Survivor.query.filter_by(id=row.id).first() if row.id else None
+        result.append({
+            "log_number": row.log_number,
+            "time": row.detection_time.strftime("%H:%M:%S") if row.detection_time else "-",
+            "survivor_id": row.id,
+            "survivor_name": survivor.name if survivor else None,
+            "detected_x": row.detected_x,
+            "detected_y": row.detected_y,
+            "similarity": round(row.similarity * 100, 1) if row.similarity is not None else None,
+            "robot_id": row.robot_id,
+            "img_path": row.img_path,
+        })
+    return jsonify(result), 200
+
+
 from app.models.database import LoginUser
 
 
