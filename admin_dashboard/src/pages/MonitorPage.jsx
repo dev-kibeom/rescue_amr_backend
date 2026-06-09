@@ -15,7 +15,6 @@ function Ring({ percent, tone, label, sub, size = 76 }) {
   const center = size / 2;
   const circumference = Math.round(2 * Math.PI * radius);
   const fill = (percent / 100) * circumference;
-
   return (
     <div className="circle-wrap">
       <div className="circle-ring" style={{ width: size, height: size }}>
@@ -39,15 +38,15 @@ export default function MonitorPage() {
   const [robots, setRobots] = useState({ r1: { x: 57, y: 66 }, r2: { x: 31, y: 31 } });
 
   useEffect(() => {
-    const timer = window.setInterval(() => setMissionSeconds((value) => value + 1), 1000);
+    const timer = window.setInterval(() => setMissionSeconds((v) => v + 1), 1000);
     return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
     const id = window.setInterval(() => {
-      setRobots((current) => ({
-        r1: { x: current.r1.x + (Math.random() - 0.5) * 0.4, y: current.r1.y + (Math.random() - 0.5) * 0.3 },
-        r2: { x: current.r2.x + (Math.random() - 0.5) * 0.3, y: current.r2.y + (Math.random() - 0.5) * 0.4 },
+      setRobots((cur) => ({
+        r1: { x: cur.r1.x + (Math.random() - 0.5) * 0.4, y: cur.r1.y + (Math.random() - 0.5) * 0.3 },
+        r2: { x: cur.r2.x + (Math.random() - 0.5) * 0.3, y: cur.r2.y + (Math.random() - 0.5) * 0.4 },
       }));
     }, 2000);
     return () => window.clearInterval(id);
@@ -56,6 +55,8 @@ export default function MonitorPage() {
   return (
     <AresShell route="monitor" title="로봇 실시간 모니터링" subtitle="ROBOT LIVE MONITORING">
       <main className="grid-monitor">
+
+        {/* 지도 패널 — 생존자 현황 패널 제거 */}
         <section className="cell gui-cell">
           <PanelHeader title="로봇 모니터링" tone="green" action={<span className="alert-chip tiny"><span className="dot" />실시간</span>} />
           <div className="gui-inner">
@@ -88,35 +89,49 @@ export default function MonitorPage() {
                   </div>
                 </div>
               </div>
-
-              <aside className="dash-right">
-                <div className="sub-header"><span className="dot orange-dot" />생존자 현황</div>
-                <div className="sub-body">
-                  <div className="casualty-grid">
-                    <div className="casualty-box survivor"><div className="casualty-num">7</div><div className="casualty-label">생존확인</div></div>
-                    <div className="casualty-box unknown"><div className="casualty-num">9</div><div className="casualty-label">미확인</div></div>
-                  </div>
-                  <StatusLine label="구역" value="13/20" />
-                  <StatusLine label="화재위치" value="306호" />
-                  <StatusLine label="갱신" value="실시간" />
-                  <button className="report-link" type="button" onClick={() => navigate("report")}><i className="ti ti-file-report" /> 보고서</button>
-                </div>
-              </aside>
             </div>
           </div>
         </section>
 
+        {/* 구조·생존자 현황 + 로봇 상태 통합 패널 */}
         <section className="cell status-cell">
           <PanelHeader title="구조 · 생존자 현황" tone="green" />
           <div className="status-dashboard">
-            <Ring percent={65} tone="rescue" label="구조" sub="구조 진행률" />
-            <Ring percent={74} tone="robot" label="배터리" sub="로봇 평균 배터리" />
+
+            {/* 생존자 카운트 — 더 크게 */}
+            <div className="casualty-grid-lg">
+              <div className="casualty-box-lg survivor">
+                <div className="casualty-num-lg">7</div>
+                <div className="casualty-label-lg">생존확인</div>
+              </div>
+              <div className="casualty-box-lg unknown">
+                <div className="casualty-num-lg">9</div>
+                <div className="casualty-label-lg">미확인</div>
+              </div>
+            </div>
+
+            <div className="status-line"><span className="status-label">구역</span><span className="status-value">13/20</span></div>
+            <div className="status-line"><span className="status-label">화재위치</span><span className="status-value">306호</span></div>
+            <div className="status-line"><span className="status-label">갱신</span><span className="status-value">실시간</span></div>
+
             <hr className="divider" />
+
+            {/* 링 차트 */}
+            <div className="ring-row">
+              <Ring percent={65} tone="rescue" label="구조" sub="구조 진행률" size={76} />
+              <Ring percent={74} tone="robot" label="배터리" sub="로봇 평균" size={76} />
+            </div>
+
+            <hr className="divider" />
+
             <div className="prog-label">로봇 상태</div>
             <RobotStatus name="ROBOT-01" percent={82} color="var(--blue)" />
             <RobotStatus name="ROBOT-02" percent={31} color="var(--orange)" />
             <RobotStatus name="ROBOT-03" percent={96} color="var(--green)" />
-            <button className="report-link wide" type="button" onClick={() => navigate("report")}><i className="ti ti-file-report" /> 사고 보고서</button>
+
+            <button className="report-link wide" type="button" onClick={() => navigate("report")}>
+              <i className="ti ti-file-report" /> 사고 보고서
+            </button>
           </div>
         </section>
 
@@ -129,10 +144,6 @@ export default function MonitorPage() {
 
 function PanelHeader({ title, tone, action }) {
   return <div className="panel-header"><span className="panel-title"><span className={`dot ${tone}`} />{title}</span>{action}</div>;
-}
-
-function StatusLine({ label, value }) {
-  return <div className="status-line"><span className="status-label">{label}</span><span className="status-value">{value}</span></div>;
 }
 
 function Legend({ color, text }) {

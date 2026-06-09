@@ -9,7 +9,7 @@ const supabase = SUPABASE_URL && SUPABASE_KEY ? createClient(SUPABASE_URL, SUPAB
 const emojis = ["👨‍🚒", "👩‍🚒", "🧑‍🚒", "🚒", "🔥"];
 
 function WorkerAvatar({ worker, large = false }) {
-  const emoji = worker.sex === "female" ? "👩" : "🧑";
+  const emoji = worker.sex === "여" ? "👩" : "🧑";
   return <div className={large ? "profile-photo-placeholder" : "avatar-placeholder"}>{emoji}</div>;
 }
 
@@ -54,27 +54,13 @@ export default function WorkerPage() {
   const today = new Date().toLocaleDateString("ko-KR", { year: "numeric", month: "2-digit", day: "2-digit" });
 
   return (
-    <AresShell route="worker" title="구조대상자 신원 관리" subtitle="SURVIVOR IDENTITY MANAGEMENT">
+    <AresShell route="worker" title="구조대상자 신원정보">
       <main className="content">
-
-        <section className="today-banner">
-          <div className="banner-left">
-            <h3>REGISTERED SURVIVORS · {today}</h3>
-            <div className="workers">
-              {survivors.slice(0, 5).map((s) => (
-                <span className="worker-chip" key={s.id}><span className="dot" />{s.name}</span>
-              ))}
-            </div>
-          </div>
-          <div className="banner-stats">
-            <div className="bstat"><div className="val">{survivors.length}</div><div className="lbl">전체 등록</div></div>
-          </div>
-        </section>
 
         <section className="main-grid">
           <div className="card">
             <div className="card-header">
-              <span className="card-title"><i className="ti ti-id-badge-2" /> 구조대상자 목록</span>
+              <span className="card-title"><i className="ti ti-id-badge-2" /> 목록</span>
             </div>
 
             <div className="filter-bar">
@@ -90,7 +76,7 @@ export default function WorkerPage() {
             {!loading && !error && (
               <table>
                 <thead>
-                  <tr><th>NAME</th><th>SEX</th><th>PHONE</th></tr>
+                  <tr><th>이름</th><th>성별</th><th>전화번호</th></tr>
                 </thead>
                 <tbody>
                   {filtered.map((s) => (
@@ -122,10 +108,10 @@ function SurvivorProfile({ survivor }) {
     <div className="profile-card">
       <div className="profile-top">
         <div className="profile-photo-wrap">
-          <div className="profile-photo-placeholder">{survivor.sex === "female" ? "👩" : "🧑"}</div>
+          <div className="profile-photo-placeholder">{survivor.sex === "여" ? "👩" : "🧑"}</div>
         </div>
         <div className="profile-name">{survivor.name}</div>
-        <div className="profile-role">SURVIVOR · ID {survivor.id}</div>
+        <div className="profile-role">주민등록번호: {survivor.id}</div>
       </div>
       <div className="profile-body">
         <Info label="성별" value={survivor.sex ?? "-"} />

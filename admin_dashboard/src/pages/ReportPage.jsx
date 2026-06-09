@@ -1,7 +1,6 @@
 import { useState } from "react";
 import AresShell from "../AresShell";
 
-const INCIDENT_LOG_KEY = "aresIncidentLogs";
 const defaultLogs = [
   { time: "14:28:03", msg: "ROBOT-01 306호 진입 - 생존자 2명 감지", highlight: "ROBOT-01" },
   { time: "14:25:47", msg: "306호 화재 진압 진행 중" },
@@ -13,22 +12,6 @@ const defaultLogs = [
   { time: "14:03:40", msg: "미션 시작 · 3층 진입" },
 ];
 
-function readLogs() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(INCIDENT_LOG_KEY) || "[]");
-    return Array.isArray(saved) ? saved.filter((item) => item?.time && item?.msg) : [];
-  } catch {
-    return [];
-  }
-}
-
-function hydrateLogs() {
-  const saved = readLogs();
-  if (saved.length) return saved;
-  localStorage.setItem(INCIDENT_LOG_KEY, JSON.stringify(defaultLogs));
-  return defaultLogs;
-}
-
 function HighlightedMessage({ log }) {
   if (!log.highlight || !log.msg.includes(log.highlight)) return <span>{log.msg}</span>;
   const [before, after] = log.msg.split(log.highlight);
@@ -36,29 +19,20 @@ function HighlightedMessage({ log }) {
 }
 
 export default function ReportPage() {
-  const [logs, setLogs] = useState(() => hydrateLogs());
+  const [logs, setLogs] = useState(defaultLogs);
 
   return (
-    <AresShell route="report" title="Incident 보고서" subtitle="INCIDENT LOG REPORT">
+    <AresShell route="report" title="실시간 구조활동 기록">
       <main className="content">
-        <section className="page-head">
-          <div>
-            <h1>현장 Incident Log</h1>
-            <p>ARES RESCUE OPERATION RECORD</p>
-          </div>
-          <div className="live-badge"><span className="dot" />LIVE RECORD</div>
-        </section>
-
-        <section className="report-summary">
+        <section className="report-summary report-summary-2">
           <ReportStat icon="ti-list-details" value={logs.length} label="전체 기록" />
           <ReportStat icon="ti-clock-check" value={logs[0]?.time || "-"} label="최근 기록 시각" />
-          <ReportStat icon="ti-database" value="LOCAL" label="저장 방식" />
         </section>
 
         <section className="panel">
           <div className="panel-header">
-            <span className="panel-title"><i className="ti ti-file-analytics" /> Incident Log</span>
-            <button className="btn" type="button" onClick={() => setLogs(hydrateLogs())}><i className="ti ti-refresh" /> 새로고침</button>
+            <span className="panel-title"><i className="ti ti-file-analytics" />구조활동 내용</span>
+            <button className="btn" type="button" onClick={() => setLogs([...defaultLogs])}><i className="ti ti-refresh" /> 새로고침</button>
           </div>
           <div className="log-list">
             {logs.length ? logs.map((log) => (
@@ -66,7 +40,7 @@ export default function ReportPage() {
                 <span className="log-time">{log.time}</span>
                 <span className="log-msg"><HighlightedMessage log={log} /></span>
               </div>
-            )) : <div className="empty">기록된 Incident Log가 없습니다.</div>}
+            )) : <div className="empty">기록된 활동이 없습니다.</div>}
           </div>
         </section>
       </main>
