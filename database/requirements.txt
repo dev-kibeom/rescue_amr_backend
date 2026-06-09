@@ -1,0 +1,10 @@
+flask
+flask-sqlalchemy
+flask-cors
+flask-migrate
+python-dotenv
+sqlalchemy
+psycopg2-binary
+pgvector
+passlib[bcrypt]
+supabase

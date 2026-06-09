@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  # 1. 중앙 데이터베이스 (PostgreSQL + pgvector 내장 이미지로 변경)
+  rescue_db:
+    image: ankane/pgvector:latest
+    container_name: amr_postgres_db
+    restart: always
+    environment:
+      POSTGRES_USER: admin          
+      POSTGRES_PASSWORD: rokey1234  
+      POSTGRES_DB: rescue_amr_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./.db_data:/var/lib/postgresql/data
+    networks:
+      - amr_networks
+
+  # 2. 웹 DB GUI 관리 툴 (pgAdmin)
+  db_admin:
+    image: dpage/pgadmin4
+    container_name: amr_db_admin
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: devkibeom@gmail.com
+      PGADMIN_DEFAULT_PASSWORD: admin_pwd
+    ports:
+      - "8080:80"
+    volumes:
+      - pgadmin_config:/var/lib/pgadmin # pgAdmin 서버 연결 설정 영구 보존용 볼륨
+    networks:
+      - amr_networks
+
+  # 3. Flask API 및 관제 UI 통합 서버
+  flask_app:
+    build: .
+    container_name: amr_flask_server
+    restart: always
+    ports:
+      - "8001:8001"
+    environment:
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8001
+      - DB_USER=admin
+      - DB_PASSWORD=rokey1234
+      - DB_HOST=rescue_db
+      - DB_PORT=5432
+      - DB_NAME=rescue_amr_db
+      - FLASK_DEBUG=1
+      - FLASK_ENV=development
+    volumes:
+      - .:/workspace
+    depends_on:
+      - rescue_db
+    networks:
+      - amr_networks
+    
+  react_dashboard:
+    image: node:20-alpine
+    container_name: amr_react_dashboard
+    working_dir: /app
+    ports:
+      - "3000:3000" # React 기본 포트 개방
+    volumes:
+      - ../admin_dashboard:/app # React 소스 코드가 있는 폴더 연결
+    # Vite 환경이 도커 볼륨 내부 변화를 실시간 캐치하도록 인라인 실행 명령어 지정
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 3000"
+    depends_on:
+      - flask_app
+    networks:
+      - amr_networks
+
+# pgAdmin 데이터 세션을 안전하게 보관할 독립 볼륨 선언
+volumes:
+  pgadmin_config:
+    driver: local
+
+networks:
+  amr_networks:
+    driver: bridge

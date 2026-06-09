@@ -1,0 +1,75 @@
+# ==========================================
+# 1. Web Frontend (admin_dashboard) 🚨 필수 추가
+# ==========================================
+admin_dashboard/node_modules/
+admin_dashboard/dist/
+admin_dashboard/.local
+admin_dashboard/.env.local
+admin_dashboard/.env.development.local
+admin_dashboard/.env.test.local
+admin_dashboard/.env.production.local
+admin_dashboard/npm-debug.log*
+admin_dashboard/yarn-debug.log*
+admin_dashboard/yarn-error.log*
+
+# ==========================================
+# 2. ROS 2 Workspace Directories (필수 제외) 
+# ==========================================
+turtlebot4_ws/build/ 
+turtlebot4_ws/install/ 
+turtlebot4_ws/log/ 
+turtlebot4_ws/**/test/ 
+
+vision_ws/build/ 
+vision_ws/install/ 
+vision_ws/log/ 
+vision_ws/**/test/ 
+
+# ==========================================
+# Docker Database Volumes (실제 DB 데이터 제외)
+# ==========================================
+.db_data/
+db_data/
+
+# ==========================================
+# 3. Python Temporary & Cache Files (전체 경로 대응)
+# ==========================================
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.Python
+venv/
+.venv/
+.pytest_cache/
+
+# ==========================================
+# 4. Data / Weights (AI 모델 가중치 및 대용량 파일)
+# ==========================================
+# 기본적으로 대용량 파일은 추적 제외 
+*.usd 
+
+# 만약 yolo_best.pt를 LFS로 관리하지 않고 깃에 그냥 올리려면 아래 주석을 해제하세요.
+# (파일 용량이 100MB 이하라면 깃이그노어에서 예외처리해 주는 것입니다)
+# !vision_ws/src/bringup/weights/yolo_best.pt
+*.pt 
+
+# ==========================================
+# 5. Compiled Object Files & C++ Artifacts
+# ==========================================
+**/*.o
+**/*.so
+**/*.a
+**/*.dylib
+**/*.dll
+
+# ==========================================
+# 6. IDE / Editor Settings & OS Specific
+# ==========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

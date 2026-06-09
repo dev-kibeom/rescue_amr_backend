@@ -1,0 +1,10 @@
+<?xml version="1.0":?>
+<root main_tree_to_execute="MainTree">
+    <BehaviorTree ID="MainTree">
+        <Sequence name="Rescue_Mission_Sequence">
+            <CheckSurvivor name="check_survivor" survivor_pose="{survivor_pose}"/>
+            
+            <LogRescueToDashboard name="log_rescue" survivor_pose="{survivor_pose}"/>
+        </Sequence>
+    </BehaviorTree>
+</root>

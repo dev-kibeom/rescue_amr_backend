@@ -1,0 +1,10 @@
+# .dockerignore
+__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.git/
+.vscode/
+data/
+.db_data/
+*.db
