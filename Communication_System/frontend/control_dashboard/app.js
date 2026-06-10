@@ -89,7 +89,12 @@ function updateStatus(payload = {}) {
   const sessions = Object.values(payload.sessions ?? {});
   const clients = Object.values(payload.clients ?? {});
   const android = clients.find((client) => client.role === "android");
-  const session = sessions[0];
+  const liveSessions = sessions
+    .filter((item) => item.state !== "ended")
+    .reverse();
+  const session = liveSessions.find((item) => (
+    android?.client_id && item.android_client_id === android.client_id
+  )) ?? liveSessions[0] ?? [...sessions].reverse()[0];
 
   if (android) {
     elements.androidDevice.textContent = android.device_id;

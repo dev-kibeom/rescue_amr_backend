@@ -110,17 +110,24 @@ class SessionManager:
         control = self._first_client(ClientRole.CONTROL)
         android = self._first_client(ClientRole.ANDROID)
 
-        session = SessionInfo(
-            session_id=uuid4().hex,
-            control_client_id=control.client_id if control else None,
-            android_client_id=android.client_id if android else None,
-            state=CallState.READY if control and android else CallState.IDLE,
-        )
+        control_client_id = control.client_id if control else None
+        android_client_id = android.client_id if android else None
 
         if requester.role == ClientRole.CONTROL:
-            session.control_client_id = requester.client_id
+            control_client_id = requester.client_id
         elif requester.role == ClientRole.ANDROID:
-            session.android_client_id = requester.client_id
+            android_client_id = requester.client_id
+
+        for existing in self._sessions.values():
+            if existing.control_client_id == control_client_id or existing.android_client_id == android_client_id:
+                existing.state = CallState.ENDED
+
+        session = SessionInfo(
+            session_id=uuid4().hex,
+            control_client_id=control_client_id,
+            android_client_id=android_client_id,
+            state=CallState.READY if control_client_id and android_client_id else CallState.IDLE,
+        )
 
         self._sessions[session.session_id] = session
         return session

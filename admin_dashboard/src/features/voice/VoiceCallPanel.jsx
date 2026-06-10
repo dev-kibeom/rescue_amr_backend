@@ -102,10 +102,14 @@ export default function VoiceCallPanel() {
     const clients = Object.values(payload.clients ?? {});
     const sessions = Object.values(payload.sessions ?? {});
     const android = clients.find((client) => client.role === "android");
-    const activeSession = sessions.find((session) => (
+    const liveSessions = sessions
+      .filter((session) => session.state !== "ended")
+      .reverse();
+    const activeSession = liveSessions.find((session) => (
+      android?.client_id && session.android_client_id === android.client_id
+    )) ?? liveSessions.find((session) => (
       session.control_client_id === CONTROL_CLIENT_ID
-      || session.android_client_id === android?.client_id
-    )) ?? sessions[0];
+    )) ?? [...sessions].reverse()[0];
 
     setAndroidDevice(android?.device_id ?? "미연결");
 

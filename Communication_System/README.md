@@ -298,6 +298,8 @@ Monitor 오른쪽 `음성 통신` 패널의 기본 기능은 다음과 같다.
 9. `통화`
 10. PC와 Android의 마이크 권한 허용
 
+세션 생성 시 Voice Server는 같은 control 또는 Android client가 포함된 기존 세션을 `ended`로 정리한 뒤 새 세션을 만든다. admin dashboard와 standalone 관제 화면도 현재 연결된 Android client id가 포함된 활성 세션을 우선 사용한다. 이 처리는 Android 페이지 새로고침이나 WiFi 재접속으로 `android-2499`, `android-5077`처럼 client id가 바뀌는 상황에서 오래된 세션으로 offer를 보내는 문제를 줄이기 위한 것이다.
+
 ### 0.10 Troubleshooting
 
 | 증상 | 원인 후보 | 조치 |
@@ -306,8 +308,17 @@ Monitor 오른쪽 `음성 통신` 패널의 기본 기능은 다음과 같다.
 | Android에서 `SERVER ONLINE`이 되지 않음 | `adb reverse` 누락 또는 WiFi 주소 오류 | USB 테스트는 `adb reverse tcp:8000 tcp:8000`, WiFi 테스트는 `https://<CONTROL_PC_IP>:8000/android` 사용 |
 | `통화` 클릭 후 마이크가 차단됨 | 비보안 출처에서 `getUserMedia()` 호출 | PC는 `localhost`, Android WiFi는 HTTPS 사용 |
 | admin dashboard에서 WebSocket 오류 | `VOICE SERVER` 주소 불일치 | USB 테스트는 `ws://127.0.0.1:8000`, WiFi HTTPS 테스트는 `wss://<CONTROL_PC_IP>:8000` |
+| `Target client is not connected: android-xxxx` | PC가 이전 Android client id가 들어간 오래된 세션을 사용 중 | Android와 PC 화면을 새로고침하고, `연결` -> `세션` -> `통화` 순서로 새 세션을 만든다. 서버 코드를 수정한 뒤라면 Voice Server도 재시작해야 함 |
 | Android HTTPS 접속 시 인증서 경고 | CA 인증서 미설치 또는 IP 불일치 | `voice-local-ca.crt`를 Android CA로 설치하고 인증서 생성 IP와 접속 IP 확인 |
 | `8000` 포트 bind 실패 | 기존 Voice Server 실행 중 | 기존 서버를 종료하거나 같은 서버를 재사용 |
+
+현재 연결 상태를 직접 확인하려면 다음 API를 사용한다.
+
+```bash
+curl -k https://127.0.0.1:8000/api/status
+```
+
+응답의 `clients`에는 현재 WebSocket으로 연결된 control/android client가 표시되고, `sessions`에는 생성된 voice session 목록이 표시된다. 오류 메시지의 `android-xxxx`가 `clients`에 없다면 이미 끊긴 Android client를 대상으로 중계하려는 상태이다.
 
 ## 1. Project Overview
 
