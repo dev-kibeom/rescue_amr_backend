@@ -25,6 +25,13 @@ sleep 3
 echo "🧹 기존 컨테이너 및 포트 점유 프로세스를 정리합니다..."
 docker compose down --remove-orphans 2>/dev/null || true
 for NAME in amr_flask_server amr_react_dashboard amr_postgres_db amr_db_admin; do
+    # Docker 명령으로 안 되면 컨테이너 내부 PID를 직접 kill
+    CPID=$(docker inspect --format '{{.State.Pid}}' $NAME 2>/dev/null)
+    if [ -n "$CPID" ] && [ "$CPID" != "0" ]; then
+        echo "  ⚡ $NAME (PID $CPID) 직접 강제 종료"
+        sudo kill -9 $CPID 2>/dev/null || true
+        sleep 1
+    fi
     docker rm -f $NAME 2>/dev/null || true
 done
 for PORT in 5432 8001 8080 3000; do
