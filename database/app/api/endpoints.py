@@ -1,7 +1,8 @@
 from flask import Blueprint, request, jsonify
-from database.app.services.rescue_amr_service import RescueAMRService
-from database.app.services.survivor_service import SurvivorService
-from database.app.repositories.rescue_amr_repository import RescueAmrRepository
+from app.services.rescue_amr_service import RescueAMRService
+from app.services.survivor_service import SurvivorService
+from app.repositories.rescue_amr_repository import RescueAmrRepository
+from app.models.database import RescueRobot
 import uuid
 from app.models.database import IncidentLog, Survivor, SurvivorLog, db
 
@@ -12,7 +13,7 @@ api_bp = Blueprint("api", __name__)
 def update_robot_pose(robot_id):
     """로봇 위치·상태 주기 업데이트 — bt_db_bridge에서 1초마다 호출"""
     data = request.get_json()
-    Turtlebot4Service.update_pose(
+    RescueAMRService.update_pose(
         robot_id=robot_id,
         x=data.get("x", 0.0),
         y=data.get("y", 0.0),
@@ -25,7 +26,7 @@ def update_robot_pose(robot_id):
 def update_robot_exploration(robot_id):
     """탐사 면적 업데이트 — bt_db_bridge에서 /map 분석 후 호출"""
     data = request.get_json()
-    Turtlebot4Service.update_exploration(
+    RescueAMRService.update_exploration(
         robot_id=robot_id,
         explored_area=data.get("explored_area", 0.0),
         total_area=data.get("total_area", 1.0),

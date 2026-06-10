@@ -1,6 +1,6 @@
 import uuid
 from app.models.database import db, RescueRobot, IncidentLog
-from database.app.repositories.rescue_amr_repository import RescueAmrRepository
+from app.repositories.rescue_amr_repository import RescueAmrRepository
 
 # 터틀봇4 관련 비즈니스 로직을 담당하는 Service 클래스
 class RescueAMRService:
@@ -12,7 +12,7 @@ class RescueAMRService:
             if not robot:
                 robot = RescueRobot(id=robot_id)
 
-            robot.status = \"SUCCESS\"
+            robot.status = "SUCCESS"
             robot.pos_x = x
             robot.pos_y = y
             RescueAmrRepository.save_robot(robot) # 장바구니 담기 1
@@ -20,7 +20,7 @@ class RescueAMRService:
             new_log = IncidentLog(
                 id=str(uuid.uuid4()),
                 robot_id=robot_id,
-                message=f\"<span class='highlight'>{robot_id}</span> {message} (x:{x:.1f}, y:{y:.1f})\",
+                message=f"<span class='highlight'>{robot_id}</span> {message} (x:{x:.1f}, y:{y:.1f})",
             )
             RescueAmrRepository.create_log(new_log) # 장바구니 담기 2
 
