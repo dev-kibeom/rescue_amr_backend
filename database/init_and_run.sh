@@ -16,39 +16,13 @@ if [ -d ".db_data" ]; then
     sudo rm -rf .db_data
 fi
 
-# 3. 모든 컨테이너 내부 PID 직접 kill 후 Docker 데몬 재시작
-echo "🧹 모든 컨테이너 프로세스를 직접 종료합니다..."
-for CID in $(docker ps -aq 2>/dev/null); do
-    CPID=$(docker inspect --format '{{.State.Pid}}' $CID 2>/dev/null)
-    if [ -n "$CPID" ] && [ "$CPID" != "0" ]; then
-        echo "  ⚡ 컨테이너 $CID (PID $CPID) 직접 강제 종료"
-        sudo kill -9 $CPID 2>/dev/null || true
-    fi
-done
-sleep 1
-
-echo "🔄 Docker 데몬을 재시작합니다..."
-sudo systemctl restart docker
-sleep 3
-
-# 4. 남은 컨테이너 및 포트 점유 프로세스 정리
-echo "🧹 남은 컨테이너 및 포트 점유 프로세스를 정리합니다..."
-docker rm -f $(docker ps -aq 2>/dev/null) 2>/dev/null || true
-for PORT in 5432 8001 8080 3000; do
-    PIDS=$(sudo lsof -ti :$PORT 2>/dev/null)
-    if [ -n "$PIDS" ]; then
-        echo "  ⚡ 포트 $PORT 점유 PID $PIDS 강제 종료"
-        sudo kill -9 $PIDS 2>/dev/null
-    fi
-done
-
-# 5. 도커 컴포즈 버전 자동 감지 및 알맞은 명령어로 가동
+# 3. 도커 컴포즈 버전 자동 감지 및 알맞은 명령어로 가동
 if docker compose version &>/dev/null; then
     echo "🐳 최신 도커 컴포즈(V2)를 감지했습니다. 인프라를 가동합니다."
-    sudo docker compose up --build -d
+    docker compose up --build -d
 elif docker-compose version &>/dev/null; then
     echo "🐳 구버전 도커 컴포즈(V1)를 감지했습니다. 하이픈(-) 명령어로 우회하여 가동합니다."
-    sudo docker-compose up --build -d
+    docker-compose up --build -d
 else
     echo "❌ 도커 컴포즈가 설치되어 있지 않습니다. 도커 설치를 먼저 확인해 주세요."
     exit 1
