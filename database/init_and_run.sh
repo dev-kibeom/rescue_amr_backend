@@ -16,24 +16,24 @@ if [ -d ".db_data" ]; then
     sudo rm -rf .db_data
 fi
 
-# 3. Docker 데몬 재시작으로 cgroup 상태 초기화 (sudo로 생성된 컨테이너의 permission denied 해결)
-echo "🔄 Docker 데몬을 재시작하여 꼬인 컨테이너 상태를 초기화합니다..."
+# 3. 모든 컨테이너 내부 PID 직접 kill 후 Docker 데몬 재시작
+echo "🧹 모든 컨테이너 프로세스를 직접 종료합니다..."
+for CID in $(docker ps -aq 2>/dev/null); do
+    CPID=$(docker inspect --format '{{.State.Pid}}' $CID 2>/dev/null)
+    if [ -n "$CPID" ] && [ "$CPID" != "0" ]; then
+        echo "  ⚡ 컨테이너 $CID (PID $CPID) 직접 강제 종료"
+        sudo kill -9 $CPID 2>/dev/null || true
+    fi
+done
+sleep 1
+
+echo "🔄 Docker 데몬을 재시작합니다..."
 sudo systemctl restart docker
 sleep 3
 
-# 4. 기존 컨테이너 및 좀비 프로세스 정리
-echo "🧹 기존 컨테이너 및 포트 점유 프로세스를 정리합니다..."
-docker compose down --remove-orphans 2>/dev/null || true
-for NAME in amr_flask_server amr_react_dashboard amr_postgres_db amr_db_admin; do
-    # Docker 명령으로 안 되면 컨테이너 내부 PID를 직접 kill
-    CPID=$(docker inspect --format '{{.State.Pid}}' $NAME 2>/dev/null)
-    if [ -n "$CPID" ] && [ "$CPID" != "0" ]; then
-        echo "  ⚡ $NAME (PID $CPID) 직접 강제 종료"
-        sudo kill -9 $CPID 2>/dev/null || true
-        sleep 1
-    fi
-    docker rm -f $NAME 2>/dev/null || true
-done
+# 4. 남은 컨테이너 및 포트 점유 프로세스 정리
+echo "🧹 남은 컨테이너 및 포트 점유 프로세스를 정리합니다..."
+docker rm -f $(docker ps -aq 2>/dev/null) 2>/dev/null || true
 for PORT in 5432 8001 8080 3000; do
     PIDS=$(sudo lsof -ti :$PORT 2>/dev/null)
     if [ -n "$PIDS" ]; then
