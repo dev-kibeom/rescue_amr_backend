@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import AresShell from "../AresShell";
 import { navigate } from "../aresRouting";
 import useClock from "../useClock";
+import VoiceCallPanel from "../features/voice/VoiceCallPanel";
 
 const API_BASE = "http://localhost:8001/api";
 // 로봇 인덱스(0-based) → WebRTC 브릿지 포트
@@ -358,6 +359,8 @@ export default function MonitorPage() {
                 </div>
               </>
             )}
+
+            <VoiceCallPanel />
 
             <hr className="divider" />
 

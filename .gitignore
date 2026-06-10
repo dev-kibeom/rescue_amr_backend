@@ -32,6 +32,17 @@ vision_ws/**/test/
 db_data/
 
 # ==========================================
+# Communication System Local Certificates
+# ==========================================
+Communication_System/certs/*.key
+Communication_System/certs/*.csr
+Communication_System/certs/*.srl
+Communication_System/certs/voice-server*.crt
+Communication_System/certs/voice-local-ca.crt
+Communication_System/certs/voice-*.cnf
+Communication_System/certs/openssl-*.cnf
+
+# ==========================================
 # 3. Python Temporary & Cache Files (전체 경로 대응)
 # ==========================================
 **/__pycache__/
