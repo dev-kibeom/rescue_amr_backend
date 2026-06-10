@@ -40,5 +40,5 @@ CREATE TABLE IF NOT EXISTS login_data (
 );
 
 INSERT INTO login_data (username, password_hash)
-VALUES ('fuoco1234', '$2b$12$ekgv.hkYzLt5p5jiQZqc9uFprIqg3SjEvVFdJRJbzqDD4H9C6MJNq')
-ON CONFLICT (username) DO NOTHING;
+VALUES ('fuoco1234', '$2b$12$wvrUTXBktstpuXruItn2B.DcYHj1tMpxHP3aDmsaoXQqU4qRhtfy2')
+ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash;
