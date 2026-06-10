@@ -261,11 +261,9 @@ def get_survivor_logs():
     return jsonify(result), 200
 
 
-from app.models.database import LoginUser
-
-
 import bcrypt as _bcrypt
-from app.models.database import LoginUser
+from supabase import create_client
+from app.core import config
 
 
 @api_bp.route("/login", methods=["POST"])
@@ -274,8 +272,13 @@ def login():
     username = data.get("username")
     password = data.get("password", "").encode("utf-8")
 
-    user = LoginUser.query.filter_by(username=username).first()
-    if not user or not _bcrypt.checkpw(password, user.password_hash.encode("utf-8")):
+    try:
+        sb = create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
+        rows = sb.table("login_data").select("password_hash").eq("username", username).execute().data
+    except Exception:
+        return jsonify({"status": "error", "message": "인증 서버에 연결할 수 없습니다."}), 503
+
+    if not rows or not _bcrypt.checkpw(password, rows[0]["password_hash"].encode("utf-8")):
         return jsonify({"status": "error", "message": "아이디 또는 비밀번호가 틀렸습니다."}), 401
 
     return jsonify({"ok": True, "username": username}), 200
