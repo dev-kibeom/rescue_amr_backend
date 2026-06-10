@@ -171,7 +171,7 @@ git push -u origin main
 ```bash
 # 1. 프로젝트 원격 코드 클론 및 디렉토리 진입
 git clone https://github.com/dev-kibeom/rescue_amr_backend.git
-cd rescue_amr_project
+cd rescue_amr_backend
 
 # 2. 개인 깃 사용자 설정 명시 (닉네임/이메일 오염 방지)
 git config --global user.name "본인이름"

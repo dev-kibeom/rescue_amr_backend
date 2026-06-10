@@ -8,8 +8,7 @@ from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 from cv_bridge import CvBridge
 
-# from sensor_msgs.msg import Image as ROSImage
-from sensor_msgs.msg import CameraInfo, CompressedImage
+from sensor_msgs.msg import CameraInfo, CompressedImage, Image as ROSImage
 from tf2_ros import Buffer, TransformListener
 from message_filters import Subscriber, ApproximateTimeSynchronizer
 from ultralytics import YOLO
@@ -96,7 +95,8 @@ class YoloCoreNode(Node):
 
     def _setup_comms(self):
         """구독자, 퍼블리셔 및 타임 동기화 필터 설정"""
-        self.rgb_pub = self.create_publisher(CompressedImage, "rgb_processed/compressed", 1)
+        self.rgb_pub = self.create_publisher(CompressedImage, "survivor/annotated/compressed", 1)
+        self.rgb_raw_pub = self.create_publisher(ROSImage, "survivor/annotated", 1)
         # self.depth_pub = self.create_publisher(ROSImage, "depth_colored", 1)
 
         self.create_subscription(CameraInfo, "camera_info_in", self.info_cb, 10)
@@ -160,19 +160,23 @@ class YoloCoreNode(Node):
             self._execute_action_strategy(results[0], depth, intrinsics, frame_id)
 
     def _publish_visualizations(self, rgb, results, frame_id):
-        """탐지된 객체가 있을 때는 annotation이 포함된 이미지를, 없을 때는 원본 RGB 이미지를 압축하여 발행"""
+        """탐지된 객체가 있을 때는 annotation이 포함된 이미지를, 없을 때는 원본 RGB 이미지를 발행"""
         rgb_display = results[0].plot() if len(results[0]) > 0 else rgb.copy()
 
         try:
-            # JPEG 포맷 압축 메시지 발행
+            raw_msg = self.bridge.cv2_to_imgmsg(rgb_display, encoding="bgr8")
+            raw_msg.header.stamp = self.get_clock().now().to_msg()
+            raw_msg.header.frame_id = frame_id
+            self.rgb_raw_pub.publish(raw_msg)
+
             rgb_msg = self.bridge.cv2_to_compressed_imgmsg(
                 rgb_display, dst_format="jpg"
             )
-            rgb_msg.header.stamp = self.get_clock().now().to_msg()
+            rgb_msg.header.stamp = raw_msg.header.stamp
             rgb_msg.header.frame_id = frame_id
             self.rgb_pub.publish(rgb_msg)
         except Exception as e:
-            self.get_logger().error(f"❌ RGB 압축 이미지 변환 실패: {e}")
+            self.get_logger().error(f"❌ RGB annotation 이미지 변환 실패: {e}")
 
     def _execute_action_strategy(self, result, depth, intrinsics, frame_id):
         """주입된 전략 컴포넌트들을 이용하여 3D 특징 추출 및 명령 하달"""

@@ -11,6 +11,10 @@ const navItems = [
 export default function AresShell({ route, title, subtitle, children }) {
   const time = useClock();
   const [showLogout, setShowLogout] = useState(false);
+  const logout = () => {
+    sessionStorage.removeItem("ares_login_time");
+    navigate("login");
+  };
 
   return (
     <div className="ares-app">
@@ -23,7 +27,7 @@ export default function AresShell({ route, title, subtitle, children }) {
             <div className="logout-dialog-msg">로그아웃 하시겠습니까?</div>
             <div className="logout-dialog-btns">
               <button className="logout-dialog-cancel" type="button" onClick={() => setShowLogout(false)}>취소</button>
-              <button className="logout-dialog-confirm" type="button" onClick={() => navigate("login")}>로그아웃</button>
+              <button className="logout-dialog-confirm" type="button" onClick={logout}>로그아웃</button>
             </div>
           </div>
         </div>

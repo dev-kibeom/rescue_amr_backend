@@ -27,14 +27,14 @@
 
 ## 🛠️ 3. 가동 및 인프라 구축 절차 (Quick Start)
 
-팀원들이 테스트 환경을 구축할 때는 터미널 창을 **총 3개** 열고 아래 순서대로 세션을 가동해야 파이프라인이 정상 동작합니다.
+팀원들이 테스트 환경을 구축할 때는 기본 터미널 창을 **총 3개** 열고 아래 순서대로 세션을 가동합니다. robot5 영상 UI까지 확인할 때는 WebRTC 브릿지용 터미널을 하나 더 엽니다.
 
 ### 1️⃣ 세션 1: Docker 백엔드 및 DB 엔진 가동 (Port 8001 / 8080)
 
 중앙 데이터베이스와 Flask 서버를 빌드하고 컨테이너를 올립니다. 호스트 PC의 `.db_data`와 `pgadmin_config` 볼륨 캐시가 자동으로 분리 영구 보존되도록 설계되어 있습니다.
 
 ```bash
-cd ~/rescue_amr_project/database
+cd ~/rescue_amr_project/rescue_amr_backend/database
 # 1. 실행 권한이 없다면 부여 후 인프라 초기화 가동
 chmod +x init_and_run.sh
 ./init_and_run.sh
@@ -51,7 +51,7 @@ docker compose logs -f flask_app
 로봇 도메인 망과 DB 웹 도메인 망 사이에서 가교 역할을 수행하는 브릿지를 실행합니다.
 
 ```bash
-cd ~/rescue_amr_project/turtlebot4_ws
+cd ~/rescue_amr_project/rescue_amr_backend/turtlebot4_ws
 source install/setup.bash
 ros2 run rescue_bt_manager bt_db_bridge.py
 
@@ -63,9 +63,22 @@ ros2 run rescue_bt_manager bt_db_bridge.py
 현장에서 로봇이 얼굴을 인식하고 실시간으로 DB 유사도 검색 기능을 검증해볼 수 있는 분할 더미 노드 스크립트입니다.
 
 ```bash
-cd ~/rescue_amr_project/vision_ws/src/yolo/yolo
+cd ~/rescue_amr_project/rescue_amr_backend/vision_ws/src/yolo/yolo
 python3 dummy_vector.py
 
+```
+
+### 4️⃣ 세션 4: robot5 OAK-D annotated 영상 WebRTC 브릿지
+
+관제 대시보드 카메라 UI에서 robot5 영상을 보려면 WebRTC 브릿지를 실행합니다. 기본 구독 토픽은 `/robot5/survivor/annotated/compressed`이며, raw 모드에서는 `/robot5/survivor/annotated`를 사용합니다.
+
+```bash
+cd ~/rescue_amr_project/rescue_amr_backend/webrtc
+python3 -m pip install --user -r requirements.txt
+./run_ares_vision.sh robot5 8003
+
+# raw Image 토픽으로 받을 때
+WEBRTC_IMAGE_TYPE=raw ./run_ares_vision.sh robot5 8003
 ```
 
 ---

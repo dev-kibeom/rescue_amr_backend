@@ -22,7 +22,7 @@ latest_frame = None
 frame_lock = threading.Lock()
 
 # argparse에서 채워지는 런타임 설정
-_TOPIC    = "rgb_processed/compressed"
+_TOPIC    = "survivor/annotated/compressed"
 _ROBOT_ID = "robot"
 
 
@@ -153,7 +153,7 @@ def start_ros_node():
 
 def main(args=None):
     # ros2 run은 커스텀 인자를 sys.argv에서 직접 읽어야 함
-    # 사용법: ros2 run yolo yolo_webrtc_bridge --ros-args -p port:=8002 -p topic:=robot1/rgb_processed/compressed -p robot:=ROBOT-01
+    # 사용법: ros2 run yolo yolo_webrtc_bridge --ros-args -p port:=8003 -p topic:=/robot5/survivor/annotated/compressed -p robot:=robot5
     import sys
 
     def get_ros_param(name, default):
@@ -165,7 +165,7 @@ def main(args=None):
         return default
 
     port  = int(get_ros_param("port",  "8002"))
-    topic =     get_ros_param("topic", "rgb_processed/compressed")
+    topic =     get_ros_param("topic", "/robot5/survivor/annotated/compressed")
     robot =     get_ros_param("robot", "robot")
 
     global _TOPIC, _ROBOT_ID

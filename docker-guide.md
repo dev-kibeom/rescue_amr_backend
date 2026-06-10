@@ -44,7 +44,7 @@ sudo usermod -aG docker $USER
 
 ```bash
 # 1. 데이터베이스 작업 디렉토리로 이동
-cd ~/rescue_amr_project/database
+cd ~/rescue_amr_project/rescue_amr_backend/database
 
 # 2. 실행 권한 부여 (처음 한 번만 실행)
 chmod +x init_and_run.sh

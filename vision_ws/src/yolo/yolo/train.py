@@ -1,7 +1,10 @@
 # vision_ws/src/yolo/yolo/train.py
 import os
 import argparse
+from pathlib import Path
 from ultralytics import YOLO
+
+VISION_WS_DIR = Path(__file__).resolve().parents[3]
 
 
 def main():
@@ -13,7 +16,7 @@ def main():
     parser.add_argument(
         "--data",
         type=str,
-        default="/home/kibeom/vision_ws/datasets/smart_factory/data.yaml",
+        default=str(VISION_WS_DIR / "datasets" / "smart_factory" / "data.yaml"),
         help="Path to data.yaml",
     )
     parser.add_argument(
@@ -35,7 +38,7 @@ def main():
     parser.add_argument(
         "--project",
         type=str,
-        default="/home/kibeom/vision_ws/runs",
+        default=str(VISION_WS_DIR / "runs"),
         help="Project runs directory",
     )
     parser.add_argument(

@@ -2,34 +2,114 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import AresShell from "../AresShell";
 import { navigate } from "../aresRouting";
 import useClock from "../useClock";
+import { useWebRTCSession } from "../WebRTCSession";
 
 const API_BASE = "http://localhost:8001/api";
-// 로봇 인덱스(0-based) → WebRTC 브릿지 포트
-// TB_01 (192.168.108.101): run_ares_vision.sh TB_01 8002
-// TB_05 (192.168.108.105): run_ares_vision.sh TB_05 8003
-const WEBRTC_PORT = (idx) => 8002 + idx;
-const WEBRTC_BASE = (idx) => `http://localhost:${WEBRTC_PORT(idx)}`;
-const ICE_SERVERS = [
-  { urls: "stun:stun.l.google.com:19302" },
-  { urls: "turn:openrelay.metered.ca:80",  username: "openrelayproject", credential: "openrelayproject" },
-  { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
-];
-
-// ICE candidate 수집 완료까지 대기 (최대 timeoutMs)
-function waitForIceGathering(pc, timeoutMs = 1800) {
-  if (pc.iceGatheringState === "complete") return Promise.resolve();
-  return new Promise((resolve) => {
-    const done = () => {
-      clearTimeout(tid);
-      pc.removeEventListener("icegatheringstatechange", onChange);
-      resolve();
-    };
-    const onChange = () => { if (pc.iceGatheringState === "complete") done(); };
-    pc.addEventListener("icegatheringstatechange", onChange);
-    const tid = setTimeout(done, timeoutMs);
-  });
-}
+const normalizeRobotId = (id) => String(id ?? "").trim().toLowerCase().replace(/-/g, "_");
 const POLL_INTERVAL = 3000; // 3초 로봇 상태 폴링
+const MAP_LAYER_PRIORITY = {
+  map: 0,
+  global_costmap: 1,
+  local_costmap: 2,
+  camera_coverage: 3,
+};
+
+function getMapBounds(map) {
+  if (!map) return null;
+  const origin = map.origin ?? { x: 0, y: 0 };
+  const widthMeters = map.width * map.resolution;
+  const heightMeters = map.height * map.resolution;
+  if (!widthMeters || !heightMeters) return null;
+  return {
+    left: Number(origin.x ?? 0),
+    bottom: Number(origin.y ?? 0),
+    width: widthMeters,
+    height: heightMeters,
+  };
+}
+
+function getLayerStyle(layerMap, baseMap) {
+  const baseBounds = getMapBounds(baseMap);
+  const layerBounds = getMapBounds(layerMap);
+  if (!baseBounds || !layerBounds) {
+    return { position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain" };
+  }
+
+  return {
+    position: "absolute",
+    left: `${((layerBounds.left - baseBounds.left) / baseBounds.width) * 100}%`,
+    top: `${100 - ((layerBounds.bottom - baseBounds.bottom + layerBounds.height) / baseBounds.height) * 100}%`,
+    width: `${(layerBounds.width / baseBounds.width) * 100}%`,
+    height: `${(layerBounds.height / baseBounds.height) * 100}%`,
+    objectFit: "fill",
+    pointerEvents: "none",
+  };
+}
+
+function mapWorldToPercent(pose, map) {
+  if (!pose || !map) return null;
+  const origin = map.origin ?? { x: 0, y: 0 };
+  const widthMeters = map.width * map.resolution;
+  const heightMeters = map.height * map.resolution;
+  if (!widthMeters || !heightMeters) return null;
+
+  const left = ((pose.x - origin.x) / widthMeters) * 100;
+  const top = 100 - ((pose.y - origin.y) / heightMeters) * 100;
+  return {
+    left: `${Math.min(98, Math.max(2, left))}%`,
+    top: `${Math.min(98, Math.max(2, top))}%`,
+  };
+}
+
+function markerColor(marker, fallback) {
+  const color = marker?.color;
+  if (!color) return fallback;
+  const r = Math.round((color.r ?? 0) * 255);
+  const g = Math.round((color.g ?? 0) * 255);
+  const b = Math.round((color.b ?? 0) * 255);
+  const a = color.a ?? 0.75;
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+
+function getMarkerStyle(marker, map, layer) {
+  const position = mapWorldToPercent(marker, map);
+  if (!position) return null;
+
+  const widthMeters = map.width * map.resolution;
+  const heightMeters = map.height * map.resolution;
+  const markerWidth = Math.max(8, ((marker.scale?.x ?? 0.25) / widthMeters) * 100);
+  const markerHeight = Math.max(8, ((marker.scale?.y ?? 0.25) / heightMeters) * 100);
+
+  if (layer === "coverage_markers") {
+    return {
+      position: "absolute",
+      left: position.left,
+      top: position.top,
+      width: `${markerWidth}%`,
+      height: `${markerHeight}%`,
+      transform: "translate(-50%, -50%)",
+      border: "1px solid rgba(6, 182, 212, 0.75)",
+      background: markerColor(marker, "rgba(6, 182, 212, 0.14)"),
+      pointerEvents: "none",
+      zIndex: 12,
+    };
+  }
+
+  return {
+    position: "absolute",
+    left: position.left,
+    top: position.top,
+    width: 14,
+    height: 14,
+    transform: "translate(-50%, -50%)",
+    borderRadius: "50%",
+    border: "2px solid #fff",
+    background: markerColor(marker, "rgba(239, 68, 68, 0.95)"),
+    boxShadow: "0 0 0 2px rgba(239, 68, 68, 0.35)",
+    pointerEvents: "none",
+    zIndex: 19,
+  };
+}
 
 function formatDuration(totalSeconds) {
   const h = Math.floor(totalSeconds / 3600);
@@ -66,81 +146,14 @@ function Ring({ percent, tone, label, sub, size = 76 }) {
 }
 
 // ─── 카메라 패널 (WebRTC) ────────────────────────────────────────────────────
-function CameraPanel({ title, tone, robotId, robotIndex, cameraTime }) {
+function CameraPanel({ title, tone, robotId, cameraTime, stream, connState = "idle" }) {
   const videoRef = useRef(null);
-  const pcRef = useRef(null);
-  const [connState, setConnState] = useState("idle"); // idle | connecting | connected | error
 
-  const connect = useCallback(async () => {
-    // 이미 연결 중이거나 연결됐으면 스킵
-    if (pcRef.current) return;
-
-    setConnState("connecting");
-    try {
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-      pcRef.current = pc;
-
-      // 수신 트랙을 video 엘리먼트에 연결
-      pc.ontrack = (e) => {
-        const stream = e.streams[0];
-        if (videoRef.current && stream) {
-          videoRef.current.srcObject = stream;
-          // autoPlay만으로 재생 안 되는 브라우저 대응 (팀원 코드 참고)
-          void videoRef.current.play().catch(() => {});
-          setConnState("connected");
-        }
-      };
-
-      pc.onconnectionstatechange = () => {
-        const s = pc.connectionState;
-        if (s === "failed" || s === "disconnected" || s === "closed") {
-          setConnState("error");
-          pcRef.current = null;
-        }
-      };
-
-      // 수신 전용 트랜시버 추가
-      pc.addTransceiver("video", { direction: "recvonly" });
-
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      await waitForIceGathering(pc); // ICE candidate 수집 완료 후 전송
-
-      const res = await fetch(`${WEBRTC_BASE(robotIndex)}/offer`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sdp: offer.sdp, type: offer.type }),
-      });
-
-      if (!res.ok) throw new Error(`시그널링 실패: ${res.status}`);
-
-      const answer = await res.json();
-      await pc.setRemoteDescription(new RTCSessionDescription(answer));
-    } catch (err) {
-      // ERR_CONNECTION_REFUSED = 로봇 미연결 상태 (정상), warn으로 조용히 처리
-      const msg = err?.message ?? String(err);
-      if (!msg.includes("fetch") && !msg.includes("Failed to fetch")) {
-        console.warn(`[WebRTC][${robotId}]`, msg);
-      }
-      if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
-      setConnState("error");
-    }
-  }, [robotId, robotIndex]);
-
-  // 컴포넌트 마운트 시 자동 연결 시도
   useEffect(() => {
-    connect();
-    return () => {
-      if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
-    };
-  }, [connect]);
-
-  // 에러 상태일 때 5초 뒤 재시도
-  useEffect(() => {
-    if (connState !== "error") return;
-    const id = setTimeout(connect, 5000);
-    return () => clearTimeout(id);
-  }, [connState, connect]);
+    if (!videoRef.current) return;
+    videoRef.current.srcObject = stream ?? null;
+    if (stream) void videoRef.current.play().catch(() => {});
+  }, [stream]);
 
   const stateLabel = {
     idle: "대기 중",
@@ -186,6 +199,15 @@ function CameraPanel({ title, tone, robotId, robotIndex, cameraTime }) {
 // ─── 메인 페이지 ─────────────────────────────────────────────────────────────
 export default function MonitorPage() {
   const cameraTime = useClock({ hour12: false });
+  const {
+    cameraStreams,
+    cameraStates,
+    streamMap,
+    streamLayers,
+    streamMarkers,
+    streamPose,
+    mapStreamState,
+  } = useWebRTCSession();
   // 로그인 시각 기준 경과 시간 — sessionStorage에서 읽어 계산
   // 페이지 이동/리마운트와 무관하게 유지됨
   const getElapsed = () => {
@@ -254,6 +276,17 @@ export default function MonitorPage() {
   // 로봇 위치를 맵 퍼센트로 변환 (pos_x/y가 미터 단위라 가정, 맵 범위 0~20m)
   const MAP_RANGE = 20;
   const toMapPct = (v) => v != null ? Math.min(95, Math.max(5, (v / MAP_RANGE) * 100)) : null;
+  const streamPoseStyle = mapWorldToPercent(streamPose, streamMap);
+  const hasLiveMapImage = Boolean(streamMap?.image);
+  const mapStateLabel = hasLiveMapImage
+    ? "LIVE"
+    : mapStreamState === "receiving"
+      ? "RX"
+      : mapStreamState === "connected"
+        ? "RTC"
+        : mapStreamState === "connecting"
+          ? "CONN"
+          : "WAIT";
 
   // 상태별 색상
   const robotColor = (status) => ({
@@ -282,7 +315,48 @@ export default function MonitorPage() {
                   {connStatus.backend === 'error' && <span style={{ color: 'var(--red-light)', fontSize: '0.75rem' }}>⚠ 서버 오프라인</span>}{connStatus.db === 'empty' && <span style={{ color: '#f59e0b', fontSize: '0.75rem' }}>⚠ 로봇 미연결</span>}
                 </div>
                 <div className="map-area">
-                  <div className="map-svg-bg" />
+                  {hasLiveMapImage ? (
+                    <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#eef2f5" }}>
+                      <div style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden" }}>
+                      <img
+                        src={streamMap.image}
+                        alt=""
+                        style={{ ...getLayerStyle(streamMap, streamMap), zIndex: 1 }}
+                      />
+                      {["global_costmap", "local_costmap", "camera_coverage"].map((layer) => (
+                        streamLayers[layer]?.image ? (
+                          <img
+                            key={layer}
+                            src={streamLayers[layer].image}
+                            alt=""
+                            style={{ ...getLayerStyle(streamLayers[layer], streamMap), zIndex: MAP_LAYER_PRIORITY[layer] + 2 }}
+                          />
+                        ) : null
+                      ))}
+                      {["coverage_markers", "survivor_markers"].flatMap((layer) => (
+                        (streamMarkers[layer] ?? []).map((marker) => {
+                          const style = getMarkerStyle(marker, streamMap, layer);
+                          if (!style) return null;
+                          return (
+                            <div
+                              key={`${layer}-${marker.ns}-${marker.id}`}
+                              style={style}
+                              title={`${layer} ${marker.ns ?? ""} ${marker.id}`}
+                            />
+                          );
+                        })
+                      ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="map-svg-bg" />
+                  )}
+                  <div
+                    title={`map stream: ${mapStreamState}`}
+                    style={{ position: "absolute", top: 6, right: 6, zIndex: 20, fontSize: "0.72rem", color: hasLiveMapImage ? "var(--green)" : "#94a3b8", background: "rgba(255,255,255,0.9)", border: "1px solid var(--border)", borderRadius: 6, padding: "4px 7px" }}
+                  >
+                    MAP {mapStateLabel}
+                  </div>
                   {/* DB에서 받은 로봇 마커 */}
                   {robots.length === 0 && connStatus.backend === 'ok' && (
                     <div className="cam-no-signal" style={{ position: "absolute", inset: 0, background: "transparent", fontSize: "0.8rem" }}>
@@ -304,6 +378,15 @@ export default function MonitorPage() {
                       </div>
                     );
                   })}
+                  {streamPoseStyle && (
+                    <div
+                      className="robot-marker"
+                      style={{ ...streamPoseStyle, zIndex: 18 }}
+                      title={`${streamPose.robotId ?? "robot"} — map stream`}
+                    >
+                      🤖
+                    </div>
+                  )}
 
                   <div className="map-overlay-top">
                     <div className="overlay-title">임무 경과시간</div>
@@ -406,14 +489,15 @@ export default function MonitorPage() {
 
         {/* ── 카메라 패널 (WebRTC) ──────────────────────────────────────── */}
         {/* 로봇이 있으면 첫 두 대, 없으면 기본 2개 슬롯 */}
-        {(Array.isArray(robots) && robots.length > 0 ? robots.slice(0, 2) : [{ id: "ROBOT-01" }, { id: "ROBOT-02" }]).map((robot, i) => (
+        {(Array.isArray(robots) && robots.length > 0 ? robots.slice(0, 2) : [{ id: "robot1" }, { id: "robot5" }]).map((robot, i) => (
           <CameraPanel
             key={robot.id}
             title={`카메라 · ${robot.id}`}
             tone={i === 0 ? "green" : "orange"}
             robotId={robot.id}
-            robotIndex={i}
             cameraTime={cameraTime}
+            stream={cameraStreams[normalizeRobotId(robot.id)]}
+            connState={cameraStates[normalizeRobotId(robot.id)] ?? "idle"}
           />
         ))}
       </main>

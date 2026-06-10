@@ -4,7 +4,20 @@ import { navigate } from "../aresRouting";
 import useClock from "../useClock";
 
 const API_BASE = "http://localhost:8001/api";
-const WEBRTC_BASE = "http://localhost:8002";
+const ROBOT_WEBRTC_PORTS = {
+  robot1: 8002,
+  robot01: 8002,
+  tb_01: 8002,
+  tb01: 8002,
+  robot2: 8003,
+  robot5: 8003,
+  robot05: 8003,
+  tb_05: 8003,
+  tb05: 8003,
+};
+const normalizeRobotId = (id) => String(id ?? "").trim().toLowerCase().replace(/-/g, "_");
+const WEBRTC_PORT = (robotId, idx) => ROBOT_WEBRTC_PORTS[normalizeRobotId(robotId)] ?? 8002 + idx;
+const WEBRTC_BASE = (robotId, idx) => `http://localhost:${WEBRTC_PORT(robotId, idx)}`;
 const POLL_INTERVAL = 3000; // 3초 로봇 상태 폴링
 
 function formatDuration(totalSeconds) {
@@ -42,7 +55,7 @@ function Ring({ percent, tone, label, sub, size = 76 }) {
 }
 
 // ─── 카메라 패널 (WebRTC) ────────────────────────────────────────────────────
-function CameraPanel({ title, tone, robotId, cameraTime }) {
+function CameraPanel({ title, tone, robotId, robotIndex, cameraTime }) {
   const videoRef = useRef(null);
   const pcRef = useRef(null);
   const [connState, setConnState] = useState("idle"); // idle | connecting | connected | error
@@ -78,7 +91,7 @@ function CameraPanel({ title, tone, robotId, cameraTime }) {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
-      const res = await fetch(`${WEBRTC_BASE}/offer`, {
+      const res = await fetch(`${WEBRTC_BASE(robotId, robotIndex)}/offer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sdp: offer.sdp, type: offer.type }),
@@ -93,7 +106,7 @@ function CameraPanel({ title, tone, robotId, cameraTime }) {
       if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
       setConnState("error");
     }
-  }, [robotId]);
+  }, [robotId, robotIndex]);
 
   // 컴포넌트 마운트 시 자동 연결 시도
   useEffect(() => {
@@ -370,12 +383,13 @@ export default function MonitorPage() {
 
         {/* ── 카메라 패널 (WebRTC) ──────────────────────────────────────── */}
         {/* 로봇이 있으면 첫 두 대, 없으면 기본 2개 슬롯 */}
-        {(robots.length > 0 ? robots.slice(0, 2) : [{ id: "ROBOT-01" }, { id: "ROBOT-02" }]).map((robot, i) => (
+        {(robots.length > 0 ? robots.slice(0, 2) : [{ id: "robot1" }, { id: "robot5" }]).map((robot, i) => (
           <CameraPanel
             key={robot.id}
             title={`카메라 · ${robot.id}`}
             tone={i === 0 ? "green" : "orange"}
             robotId={robot.id}
+            robotIndex={i}
             cameraTime={cameraTime}
           />
         ))}

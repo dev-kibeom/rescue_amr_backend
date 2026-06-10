@@ -23,13 +23,13 @@ def generate_launch_description():
     ])
 
     rgb_topic_arg = DeclareLaunchArgument(
-        "rgb_topic", default_value="/robot1/oakd/rgb/image_raw/compressed"
+        "rgb_topic", default_value="/robot5/oakd/rgb/image_raw/compressed"
     )
     depth_topic_arg = DeclareLaunchArgument(
-        "depth_topic", default_value="/robot1/oakd/stereo/image_raw/compressedDepth"
+        "depth_topic", default_value="/robot5/oakd/stereo/image_raw/compressedDepth"
     )
     camera_info_topic_arg = DeclareLaunchArgument(
-        "camera_info_topic", default_value="/robot1/oakd/rgb/camera_info"
+        "camera_info_topic", default_value="/robot5/oakd/rgb/camera_info"
     )
 
     detector_type_arg = DeclareLaunchArgument(
@@ -42,7 +42,7 @@ def generate_launch_description():
     )
 
     namespace_arg = DeclareLaunchArgument(
-        "namespace", default_value="robot1", description="로봇 고유 네임스페이스"
+        "namespace", default_value="robot5", description="로봇 고유 네임스페이스"
     )
 
     yolo_node = Node(
