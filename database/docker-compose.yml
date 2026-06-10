@@ -7,13 +7,19 @@ services:
     container_name: amr_postgres_db
     restart: always
     environment:
-      POSTGRES_USER: admin          
-      POSTGRES_PASSWORD: rokey1234  
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: rokey1234
       POSTGRES_DB: rescue_amr_db
     ports:
       - "5432:5432"
     volumes:
       - ./.db_data:/var/lib/postgresql/data
+      - ./init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d rescue_amr_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks:
       - amr_networks
 
@@ -49,13 +55,16 @@ services:
       - DB_NAME=rescue_amr_db
       - FLASK_DEBUG=1
       - FLASK_ENV=development
+      - SUPABASE_URL=https://ijzmpglzrsmmejpawvsa.supabase.co
+      - SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlqem1wZ2x6cnNtbWVqcGF3dnNhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2NDY5MjEsImV4cCI6MjA5NjIyMjkyMX0.pNalFUDepa9sRC9VDzPqE1-8UZKNVoZG5MyW0sv1_j8
     volumes:
       - .:/workspace
     depends_on:
-      - rescue_db
+      rescue_db:
+        condition: service_healthy
     networks:
       - amr_networks
-    
+
   react_dashboard:
     image: node:20-alpine
     container_name: amr_react_dashboard

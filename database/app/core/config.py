@@ -26,5 +26,8 @@ DB_HOST = os.getenv("DB_HOST", "rescue_db")  # 도커 내부에서는 서비스�
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "rescue_amr_db")
 
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+
 # 최종 SQLAlchemy DB URL (PostgreSQL 매핑)
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
