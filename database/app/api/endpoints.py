@@ -278,7 +278,7 @@ def login():
     except Exception:
         return jsonify({"status": "error", "message": "인증 서버에 연결할 수 없습니다."}), 503
 
-    if not rows or not _bcrypt.checkpw(password, rows[0]["password_hash"].encode("utf-8")):
+    if not rows or not _bcrypt.checkpw(password, rows[0]["password_hash"].strip().encode("utf-8")):
         return jsonify({"status": "error", "message": "아이디 또는 비밀번호가 틀렸습니다."}), 401
 
     return jsonify({"ok": True, "username": username}), 200
