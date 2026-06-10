@@ -14,11 +14,17 @@ from aiortc.contrib.media import MediaRelay
 from av import VideoFrame
 
 import threading
+import argparse
 
 # 글로벌 릴레이 및 이미지 변수 세팅 (비동기 루프와 ROS2 스핀 간 데이터 공유용)
 relay = MediaRelay()
 latest_frame = None
 frame_lock = threading.Lock()
+
+# argparse에서 채워지는 런타임 설정
+_TOPIC    = "rgb_processed/compressed"
+_ROBOT_ID = "robot"
+
 
 
 class RosImageTrack(MediaStreamTrack):
@@ -72,10 +78,10 @@ class YoloWebRtcBridge(Node):
 
         # yolo_core_node.py가 발행하는 annotation 압축 이미지 토픽 구독
         self.subscription = self.create_subscription(
-            CompressedImage, "rgb_processed/compressed", self.image_callback, 10
+            CompressedImage, _TOPIC, self.image_callback, 10
         )
         self.get_logger().info(
-            "👀 [WebRTC 브릿지] YOLO 어노테이션 이미지 토픽 구독 시작"
+            f"👀 [WebRTC 브릿지][{_ROBOT_ID}] 토픽 구독: {_TOPIC}"
         )
 
     def image_callback(self, msg):
@@ -146,23 +152,37 @@ def start_ros_node():
 
 
 def main(args=None):
+    # ros2 run은 커스텀 인자를 sys.argv에서 직접 읽어야 함
+    # 사용법: ros2 run yolo yolo_webrtc_bridge --ros-args -p port:=8002 -p topic:=robot1/rgb_processed/compressed -p robot:=ROBOT-01
+    import sys
+
+    def get_ros_param(name, default):
+        """--ros-args -p name:=value 형태에서 값 추출"""
+        key = f"{name}:="
+        for arg in sys.argv:
+            if arg.startswith(key):
+                return arg[len(key):]
+        return default
+
+    port  = int(get_ros_param("port",  "8002"))
+    topic =     get_ros_param("topic", "rgb_processed/compressed")
+    robot =     get_ros_param("robot", "robot")
+
+    global _TOPIC, _ROBOT_ID
+    _TOPIC    = topic
+    _ROBOT_ID = robot
+
     rclpy.init(args=args)
 
-    # ROS2 스핀을 백그라운드 스레드에서 시작
     ros_thread = threading.Thread(target=start_ros_node, daemon=True)
     ros_thread.start()
 
-    # 시그널링용 비동기 HTTP 웹서버 가동 (포트 8002)
     app = web.Application()
-    # CORS 허용 설정
-    # cors = {"headers": "Content-Type", "allow_methods": "POST", "allow_origins": "*"}
-    # app.router.add_post("/offer", handle_offer)
-
-    app.router.add_post("/offer", handle_offer)
+    app.router.add_post("/offer",    handle_offer)
     app.router.add_options("/offer", handle_options)
 
-    print("🚀 [WebRTC 서버] PC 포트 8002번에서 시그널링 대기 중...")
-    web.run_app(app, host="0.0.0.0", port=8002)
+    print(f"🚀 [WebRTC 서버] 포트 {port} | 토픽: {_TOPIC} | 로봇: {_ROBOT_ID}")
+    web.run_app(app, host="0.0.0.0", port=port)
 
 
 # 터미널에서 스크립트를 직접 python3로 실행할 때를 위한 방어 코드
