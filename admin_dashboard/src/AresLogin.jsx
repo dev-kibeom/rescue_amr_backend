@@ -202,12 +202,16 @@ export default function AresLogin() {
     }
 
     setLoading(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
     try {
       const res = await fetch(LOGIN_API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: username.trim(), password }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (res.ok && data.ok) {
         sessionStorage.setItem("ares_login_time", Date.now());
@@ -218,6 +222,7 @@ export default function AresLogin() {
     } catch {
       setError("⚠ 로그인 서버 연결을 확인해 주세요.");
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
   };
