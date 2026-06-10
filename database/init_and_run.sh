@@ -16,16 +16,17 @@ if [ -d ".db_data" ]; then
     sudo rm -rf .db_data
 fi
 
-# 3. 기존 컨테이너 sudo로 강제 정리 (proxy 킬 전에 먼저 정상 종료 시도)
-echo "🧹 기존 컨테이너를 sudo로 강제 정리합니다..."
-sudo docker compose down --remove-orphans 2>/dev/null || true
-for NAME in amr_flask_server amr_react_dashboard amr_postgres_db amr_db_admin; do
-    sudo docker kill $NAME 2>/dev/null || true
-    sudo docker rm -f $NAME 2>/dev/null || true
-done
+# 3. Docker 데몬 재시작으로 cgroup 상태 초기화 (sudo로 생성된 컨테이너의 permission denied 해결)
+echo "🔄 Docker 데몬을 재시작하여 꼬인 컨테이너 상태를 초기화합니다..."
+sudo systemctl restart docker
+sleep 3
 
-# 4. 컨테이너 정리 후에도 남아있는 좀비 docker-proxy 프로세스 정리
-echo "🧹 포트 점유 중인 좀비 docker-proxy 프로세스를 정리합니다..."
+# 4. 기존 컨테이너 및 좀비 프로세스 정리
+echo "🧹 기존 컨테이너 및 포트 점유 프로세스를 정리합니다..."
+docker compose down --remove-orphans 2>/dev/null || true
+for NAME in amr_flask_server amr_react_dashboard amr_postgres_db amr_db_admin; do
+    docker rm -f $NAME 2>/dev/null || true
+done
 for PORT in 5432 8001 8080 3000; do
     PIDS=$(sudo lsof -ti :$PORT 2>/dev/null)
     if [ -n "$PIDS" ]; then
