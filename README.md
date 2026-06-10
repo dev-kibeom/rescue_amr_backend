@@ -2,12 +2,6 @@
 
 본 프레임워크는 자율주행 AMR(Turtlebot4)의 전역 위치 정보 및 YOLO 비전 기반 생존자 식별 임베딩 벡터를 실시간으로 수집하고, **확장 PostgreSQL(pgvector)** 인프라와 매칭하여 **React 실시간 대시보드**에 통합 관제 피드를 동기화하는 로봇-백엔드 통합 제어 시스템입니다.
 
-Supabase에 가상 계정 정보가 저장되어 있습니다.
-
-ID - fuoco1234
-
-비밀번호 - rokey1234
-
 ---
 
 ## 🏗️ 1. 시스템 아키텍처 개요
@@ -81,8 +75,11 @@ python3 dummy_vector.py
 도커(Docker) 환경에서 실행 중인 PostgreSQL 데이터베이스를 pgAdmin 웹 인터페이스를 통해 연결하고 데이터를 확인하는 방법입니다.
 
 ## 🛠️ Step 1. pgAdmin 웹 접속
-웹 브라우저를 열고 아래 주소로 접속한 뒤, 제공된 계정 정보로 로그인합니다.
+웹 브라우저를 열고 아래 주소로 접속한 뒤, 제공된 계정 정보로 Supabase에 가상 계정 정보가 저장되어 있습니다.
 
+ID - fuoco1234
+
+비밀번호 - 1234
 * 접속 주소: http://localhost:8080
 * 로그인 ID: devkibeom@gmail.com
 * 비밀번호: admin_pwd
