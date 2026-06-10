@@ -274,7 +274,7 @@ def login():
 
     try:
         sb = create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
-        rows = sb.table("login_data").select("password_hash").eq("username", username).execute().data
+        rows = sb.table("auth_users").select("password_hash").eq("username", username).execute().data
     except Exception:
         return jsonify({"status": "error", "message": "인증 서버에 연결할 수 없습니다."}), 503
 
