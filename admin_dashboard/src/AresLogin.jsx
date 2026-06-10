@@ -1,7 +1,8 @@
 import { useState } from "react";
 import loginBg from "./assets/login-bg.jpg";
 
-const LOGIN_API_URL = import.meta.env.VITE_LOGIN_API_URL;
+const LOGIN_API_URL = import.meta.env.VITE_LOGIN_API_URL ||
+  `${window.location.protocol}//${window.location.hostname}:8001/api/login`;
 
 const styles = `
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
