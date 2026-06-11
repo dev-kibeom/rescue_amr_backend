@@ -52,6 +52,7 @@ TARGET_FPS = float(os.getenv("WEBRTC_TARGET_FPS", "15"))
 MAX_WIDTH = int(os.getenv("WEBRTC_MAX_WIDTH", "480"))
 VIDEO_QOS_DEPTH = int(os.getenv("WEBRTC_IMAGE_QOS_DEPTH", "1"))
 VIDEO_QOS_RELIABILITY = os.getenv("WEBRTC_IMAGE_QOS_RELIABILITY", "best_effort").lower()
+VIDEO_ACCEPT_FPS = float(os.getenv("WEBRTC_IMAGE_ACCEPT_FPS", "0"))
 MAP_QOS_DEPTH = int(os.getenv("WEBRTC_MAP_QOS_DEPTH", "1"))
 MAP_QOS_RELIABILITY = os.getenv("WEBRTC_MAP_QOS_RELIABILITY", "reliable").strip().lower()
 MAP_QOS_DURABILITY = os.getenv("WEBRTC_MAP_QOS_DURABILITY", "transient_local").strip().lower()
@@ -72,22 +73,28 @@ def env_key(robot_id):
     return normalize_robot_id(robot_id).upper().replace("_", "")
 
 
-def video_topic_for(robot_id):
+def split_topics(value):
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def video_topics_for(robot_id):
     key = env_key(robot_id)
     specific = os.getenv(f"WEBRTC_IMAGE_TOPIC_{key}")
     if specific:
-        return specific
+        return split_topics(specific)
     if normalize_robot_id(robot_id) in ("robot5", "robot05", "tb_05", "tb05"):
-        return os.getenv("WEBRTC_IMAGE_TOPIC_ROBOT5", "/robot5/survivor/annotated/compressed")
-    return os.getenv("WEBRTC_IMAGE_TOPIC_ROBOT1", "/robot1/oakd/rgb/image_raw/compressed")
+        return split_topics(os.getenv("WEBRTC_IMAGE_TOPIC_ROBOT5", "/robot5/survivor/annotated"))
+    return split_topics(os.getenv("WEBRTC_IMAGE_TOPIC_ROBOT1", "/robot1/oakd/rgb/image_raw/compressed"))
 
 
 def image_type_for(topic, robot_id):
+    if not topic.endswith("/compressed"):
+        return "raw"
     key = env_key(robot_id)
     specific = os.getenv(f"WEBRTC_IMAGE_TYPE_{key}", "").strip().lower()
     if specific:
         return specific
-    return "compressed" if topic.endswith("/compressed") else "raw"
+    return "compressed"
 
 
 def build_ice_servers():
@@ -234,8 +241,19 @@ class VideoSharedState:
         self.accepted = 0
         self.dropped = 0
         self.sent = 0
-        self.min_interval = 1.0 / TARGET_FPS if TARGET_FPS > 0 else 0.0
+        self.incoming = 0
+        self.version = 0
+        self.last_topic = ""
+        self.last_encoding = ""
+        self.last_error = ""
+        self.min_interval = 1.0 / VIDEO_ACCEPT_FPS if VIDEO_ACCEPT_FPS > 0 else 0.0
         self.last_accept = 0.0
+
+    def mark_incoming(self, topic, encoding=""):
+        with self.lock:
+            self.incoming += 1
+            self.last_topic = topic
+            self.last_encoding = encoding
 
     def should_accept(self):
         now = time.monotonic()
@@ -245,21 +263,43 @@ class VideoSharedState:
         self.last_accept = now
         return True
 
-    def set_frame(self, frame):
+    def set_frame(self, frame, topic="", encoding=""):
         with self.lock:
             self.frame = frame
             self.frame_time = time.monotonic()
             self.accepted += 1
+            self.version += 1
+            if topic:
+                self.last_topic = topic
+            if encoding:
+                self.last_encoding = encoding
+            self.last_error = ""
+
+    def set_error(self, error):
+        with self.lock:
+            self.last_error = str(error)
 
     def get_frame(self):
         with self.lock:
-            return self.frame, self.frame_time
+            return self.frame, self.frame_time, self.version
 
     def mark_sent(self):
         self.sent += 1
 
     def stats(self):
-        return {"accepted": self.accepted, "dropped": self.dropped, "sent": self.sent}
+        with self.lock:
+            age = None if self.frame_time <= 0 else max(0.0, time.monotonic() - self.frame_time)
+            return {
+                "incoming": self.incoming,
+                "accepted": self.accepted,
+                "dropped": self.dropped,
+                "sent": self.sent,
+                "version": self.version,
+                "lastTopic": self.last_topic,
+                "lastEncoding": self.last_encoding,
+                "lastError": self.last_error,
+                "lastFrameAgeSec": age,
+            }
 
 
 class GatewayVideoTrack(VideoStreamTrack):
@@ -270,8 +310,8 @@ class GatewayVideoTrack(VideoStreamTrack):
         self.state = state
         self.start_time = None
         self.pts = 0
-        frame_interval = 1.0 / TARGET_FPS if TARGET_FPS > 0 else 1.0 / 30
-        self.pts_step = max(1, int(RTP_CLOCK_RATE * frame_interval))
+        self.frame_interval = 1.0 / TARGET_FPS if TARGET_FPS > 0 else 1.0 / 30
+        self.pts_step = max(1, int(RTP_CLOCK_RATE * self.frame_interval))
 
     async def _next_timestamp(self):
         loop = asyncio.get_event_loop()
@@ -284,11 +324,13 @@ class GatewayVideoTrack(VideoStreamTrack):
         wait = self.start_time + (self.pts / RTP_CLOCK_RATE) - loop.time()
         if wait > 0:
             await asyncio.sleep(wait)
+        elif wait < -self.frame_interval:
+            self.start_time = loop.time() - (self.pts / RTP_CLOCK_RATE)
         return self.pts, Fraction(1, RTP_CLOCK_RATE)
 
     async def recv(self):
         pts, time_base = await self._next_timestamp()
-        frame, _ = self.state.get_frame()
+        frame, _, _version = self.state.get_frame()
         if frame is None:
             frame = np.zeros((480, 640, 3), dtype=np.uint8)
             cv2.putText(frame, f"ARES {self.state.robot_id} waiting", (80, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 80, 80), 2)
@@ -300,11 +342,10 @@ class GatewayVideoTrack(VideoStreamTrack):
 
 
 class VisionNode(Node):
-    def __init__(self, robot_id, topic, image_type, state):
+    def __init__(self, robot_id, topics, state):
         super().__init__(f"ares_gateway_vision_{normalize_robot_id(robot_id)}")
         self.robot_id = robot_id
-        self.topic = topic
-        self.image_type = image_type
+        self.topics = topics
         self.state = state
         self.bridge = CvBridge()
         self.group = ReentrantCallbackGroup()
@@ -312,31 +353,41 @@ class VisionNode(Node):
         self.last_stat = time.monotonic()
         self.last_snap = self.state.stats()
 
-        msg_type = CompressedImage if image_type == "compressed" else Image
-        callback = self._compressed_cb if image_type == "compressed" else self._raw_cb
-        self.create_subscription(msg_type, topic, callback, build_video_qos(), callback_group=self.group)
-        self.get_logger().info(f"[gateway:{robot_id}] image topic: {topic} ({image_type})")
+        for topic in topics:
+            image_type = image_type_for(topic, robot_id)
+            msg_type = CompressedImage if image_type == "compressed" else Image
+            if image_type == "compressed":
+                callback = lambda msg, topic=topic: self._compressed_cb(msg, topic)
+            else:
+                callback = lambda msg, topic=topic: self._raw_cb(msg, topic)
+            self.create_subscription(msg_type, topic, callback, build_video_qos(), callback_group=self.group)
+            self.get_logger().info(f"[gateway:{robot_id}] image topic: {topic} ({image_type})")
+        self.create_timer(STATS_INTERVAL, self._status_timer, callback_group=self.group)
 
-    def _raw_cb(self, msg):
+    def _raw_cb(self, msg, topic):
+        self.state.mark_incoming(topic, getattr(msg, "encoding", ""))
         if not self.state.should_accept():
             return
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, "passthrough")
             frame = resize_for_stream(frame)
-            self.state.set_frame(image_to_rgb(frame, msg.encoding))
+            self.state.set_frame(image_to_rgb(frame, msg.encoding), topic, msg.encoding)
             self._log(frame)
         except Exception as exc:
+            self.state.set_error(exc)
             self.get_logger().warn(f"[{self.robot_id}] raw conversion failed: {exc}")
 
-    def _compressed_cb(self, msg):
+    def _compressed_cb(self, msg, topic):
+        self.state.mark_incoming(topic, getattr(msg, "format", "compressed"))
         if not self.state.should_accept():
             return
         try:
             frame = self.bridge.compressed_imgmsg_to_cv2(msg, "bgr8")
             frame = resize_for_stream(frame)
-            self.state.set_frame(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            self.state.set_frame(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), topic, getattr(msg, "format", "compressed"))
             self._log(frame)
         except Exception as exc:
+            self.state.set_error(exc)
             self.get_logger().warn(f"[{self.robot_id}] compressed conversion failed: {exc}")
 
     def _log(self, frame):
@@ -353,6 +404,14 @@ class VisionNode(Node):
         self.get_logger().info(f"[{self.robot_id}] {width}x{height} acc={acc_fps:.1f}fps sent={sent_fps:.1f}fps drop={dropped}")
         self.last_snap = snap
         self.last_stat = now
+
+    def _status_timer(self):
+        snap = self.state.stats()
+        if snap["accepted"] > 0:
+            return
+        self.get_logger().warn(
+            f"[{self.robot_id}] no image frames yet. subscribed topics: {', '.join(self.topics)}"
+        )
 
 
 class MapChannels:
@@ -786,9 +845,8 @@ def start_ros2():
     executor.add_node(map_node)
     for robot in VIDEO_ROBOTS:
         key = normalize_robot_id(robot)
-        topic = video_topic_for(robot)
-        image_type = image_type_for(topic, robot)
-        node = VisionNode(robot, topic, image_type, video_states[key])
+        topics = video_topics_for(robot)
+        node = VisionNode(robot, topics, video_states[key])
         executor.add_node(node)
     executor.spin()
 
@@ -809,6 +867,10 @@ async def handle_health(_request):
             "port": PORT,
             "mapRobot": MAP_ROBOT,
             "videoRobots": VIDEO_ROBOTS,
+            "videoStats": {
+                key: state.stats()
+                for key, state in video_states.items()
+            },
             "ros2": ROS2_AVAILABLE,
             "dummy": DUMMY_MODE,
         },

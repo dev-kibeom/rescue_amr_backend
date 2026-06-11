@@ -2,11 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 
 const WEBRTC_GATEWAY_URL = "http://127.0.0.1:8010";
 const DEFAULT_CAMERA_ROBOTS = ["robot1", "robot5"];
-const ICE_SERVERS = [
-  { urls: "stun:stun.l.google.com:19302" },
-  { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
-  { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
-];
+const ICE_SERVERS = [];
 const MAP_LAYER_PRIORITY = {
   map: 0,
   global_costmap: 1,
@@ -18,6 +14,24 @@ const WebRTCSessionContext = createContext(null);
 
 function normalizeRobotId(id) {
   return String(id ?? "").trim().toLowerCase().replace(/-/g, "_");
+}
+
+function robotAliases(id) {
+  const key = normalizeRobotId(id);
+  if (["robot1", "robot01", "tb_01", "tb01"].includes(key)) {
+    return ["robot1", "robot01", "tb_01", "tb01"];
+  }
+  if (["robot5", "robot05", "robot2", "tb_05", "tb05"].includes(key)) {
+    return ["robot5", "robot05", "robot2", "tb_05", "tb05"];
+  }
+  return [key];
+}
+
+function assignRobotAliases(value, robotId, payload) {
+  return robotAliases(robotId).reduce(
+    (next, alias) => ({ ...next, [alias]: payload }),
+    { ...value },
+  );
 }
 
 function getMapRobotFromLocation() {
@@ -145,7 +159,7 @@ export function WebRTCSessionProvider({ active, children }) {
     const connectCamera = async (robotId) => {
       const key = normalizeRobotId(robotId);
       if (!alive || cameraPcsRef.current[key]) return;
-      setCameraStates((prev) => ({ ...prev, [key]: "connecting" }));
+      setCameraStates((prev) => assignRobotAliases(prev, robotId, "connecting"));
 
       try {
         const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
@@ -154,8 +168,8 @@ export function WebRTCSessionProvider({ active, children }) {
         pc.ontrack = (event) => {
           const stream = event.streams[0];
           if (!stream) return;
-          setCameraStreams((prev) => ({ ...prev, [key]: stream }));
-          setCameraStates((prev) => ({ ...prev, [key]: "connected" }));
+          setCameraStreams((prev) => assignRobotAliases(prev, robotId, stream));
+          setCameraStates((prev) => assignRobotAliases(prev, robotId, "connected"));
         };
 
         pc.onconnectionstatechange = () => {
@@ -163,7 +177,7 @@ export function WebRTCSessionProvider({ active, children }) {
           if (["failed", "disconnected", "closed"].includes(pc.connectionState)) {
             pc.close();
             delete cameraPcsRef.current[key];
-            setCameraStates((prev) => ({ ...prev, [key]: "error" }));
+            setCameraStates((prev) => assignRobotAliases(prev, robotId, "error"));
             cameraRetryRef.current[key] = setTimeout(() => connectCamera(robotId), 5000);
           }
         };
@@ -188,7 +202,7 @@ export function WebRTCSessionProvider({ active, children }) {
           delete cameraPcsRef.current[key];
         }
         if (alive) {
-          setCameraStates((prev) => ({ ...prev, [key]: "error" }));
+          setCameraStates((prev) => assignRobotAliases(prev, robotId, "error"));
           cameraRetryRef.current[key] = setTimeout(() => connectCamera(robotId), 5000);
         }
       }
