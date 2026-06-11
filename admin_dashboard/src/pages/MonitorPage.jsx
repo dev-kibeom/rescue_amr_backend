@@ -194,6 +194,7 @@ export default function MonitorPage() {
   };
   const [missionSeconds, setMissionSeconds] = useState(getElapsed);
   const [robots, setRobots] = useState([]);        // rescue_robots 테이블 — 항상 배열
+  const [pathHistory, setPathHistory] = useState({}); // { robotId: [{x, y}, ...] } 궤적 이력
   const [survivorStats, setSurvivorStats] = useState({ confirmed: 0, unknown: 0 });
   // 연결 상태 3단계 분리
   // backend: 'ok' | 'error'   — Flask 서버 자체 응답 여부
@@ -230,6 +231,19 @@ export default function MonitorPage() {
                       : Array.isArray(data)        ? data
                       : [];
       setRobots(robotList);
+      // 각 로봇의 위치가 바뀔 때마다 궤적 이력에 추가 (최대 300점 유지)
+      setPathHistory(prev => {
+        const next = { ...prev };
+        robotList.forEach(robot => {
+          if (robot.pos_x == null || robot.pos_y == null) return;
+          const history = prev[robot.id] ?? [];
+          const last = history[history.length - 1];
+          if (!last || last.x !== robot.pos_x || last.y !== robot.pos_y) {
+            next[robot.id] = [...history, { x: robot.pos_x, y: robot.pos_y }].slice(-300);
+          }
+        });
+        return next;
+      });
       const dbSt = data.db_status ?? (robotList.length === 0 ? 'empty' : 'ok');
       setConnStatus({ backend: 'ok', db: dbSt });
     } else {
@@ -283,6 +297,30 @@ export default function MonitorPage() {
                 </div>
                 <div className="map-area">
                   <div className="map-svg-bg" />
+                  {/* 궤적 SVG 오버레이 — viewBox 0~100이 map-area % 좌표계와 1:1 대응 */}
+                  <svg
+                    viewBox="0 0 100 100"
+                    preserveAspectRatio="none"
+                    style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}
+                  >
+                    {Array.isArray(robots) && robots.map((robot, i) => {
+                      const pts = pathHistory[robot.id];
+                      if (!pts || pts.length < 2) return null;
+                      const points = pts.map(p => `${toMapPct(p.x)},${toMapPct(p.y)}`).join(" ");
+                      return (
+                        <polyline
+                          key={robot.id}
+                          points={points}
+                          fill="none"
+                          stroke={i === 0 ? "var(--green)" : "orange"}
+                          strokeWidth="1.2"
+                          strokeOpacity="0.75"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      );
+                    })}
+                  </svg>
                   {/* DB에서 받은 로봇 마커 */}
                   {robots.length === 0 && connStatus.backend === 'ok' && (
                     <div className="cam-no-signal" style={{ position: "absolute", inset: 0, background: "transparent", fontSize: "0.8rem" }}>
@@ -358,9 +396,6 @@ export default function MonitorPage() {
                 </div>
               </>
             )}
-
-            {/* 음성 통신 패널 */}
-            <VoicePanel robots={robots} />
 
             <hr className="divider" />
 
@@ -447,120 +482,6 @@ function Legend({ color, text }) {
   return (
     <div className="legend-item">
       <span className="legend-dot" style={{ background: color }} />{text}
-    </div>
-  );
-}
-
-// ─── 음성 통신 패널 (WebRTC 오디오) ──────────────────────────────────────────
-const SIGNAL_BASE = "http://localhost:5000";
-const VOICE_ROOM  = "rescue-voice";
-
-function VoicePanel({ robots }) {
-  const [voiceState, setVoiceState] = useState("idle"); // idle | connecting | connected | error
-  const [connectedRobot, setConnectedRobot] = useState(null);
-  const pcRef         = useRef(null);
-  const localStreamRef= useRef(null);
-  const pollRef       = useRef(null);
-
-  const disconnect = useCallback(async () => {
-    clearInterval(pollRef.current);
-    if (localStreamRef.current) { localStreamRef.current.getTracks().forEach(t => t.stop()); localStreamRef.current = null; }
-    if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
-    try { await fetch(`${SIGNAL_BASE}/clear/${VOICE_ROOM}`, { method: "DELETE" }); } catch {}
-    setVoiceState("idle");
-    setConnectedRobot(null);
-  }, []);
-
-  const connect = useCallback(async () => {
-    if (voiceState === "connecting" || voiceState === "connected") return;
-    setVoiceState("connecting");
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      localStreamRef.current = stream;
-
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-      pcRef.current = pc;
-      stream.getTracks().forEach(t => pc.addTrack(t, stream));
-
-      pc.onconnectionstatechange = () => {
-        const s = pc.connectionState;
-        if (s === "connected") {
-          setVoiceState("connected");
-          setConnectedRobot(robots[0]?.id ?? "ROBOT-01");
-        } else if (s === "failed" || s === "disconnected" || s === "closed") {
-          setVoiceState("error");
-        }
-      };
-
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      await waitForIceGathering(pc);
-
-      await fetch(`${SIGNAL_BASE}/offer`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sdp: offer.sdp, type: offer.type, room: VOICE_ROOM }),
-      });
-
-      // 모바일 측 answer 폴링 (1초 간격, 최대 60초)
-      let attempts = 0;
-      const poll = setInterval(async () => {
-        attempts++;
-        if (attempts > 60) { clearInterval(poll); setVoiceState("error"); return; }
-        try {
-          const res = await fetch(`${SIGNAL_BASE}/answer/${VOICE_ROOM}`);
-          if (res.ok) {
-            const answer = await res.json();
-            if (answer.type === "answer") {
-              clearInterval(poll);
-              await pc.setRemoteDescription(new RTCSessionDescription(answer));
-            }
-          }
-        } catch {}
-      }, 1000);
-      pollRef.current = poll;
-    } catch (err) {
-      console.warn("[VoicePanel]", err?.message ?? err);
-      if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
-      if (localStreamRef.current) { localStreamRef.current.getTracks().forEach(t => t.stop()); localStreamRef.current = null; }
-      setVoiceState("error");
-    }
-  }, [voiceState, robots]);
-
-  // 언마운트 시 정리
-  useEffect(() => () => { disconnect(); }, []);
-
-  const firstRobot = robots[0]?.id ?? "ROBOT-01";
-  const isConnected  = voiceState === "connected";
-  const isConnecting = voiceState === "connecting";
-
-  const hintText = isConnecting ? "연결 중…"
-    : isConnected ? "통화 중 — 탭하여 종료"
-    : voiceState === "error" ? "연결 실패 — 다시 시도"
-    : "탭하여 서버 연결";
-
-  return (
-    <div className="voice-panel">
-      <div className="voice-header">
-        <span><i className="ti ti-microphone" /> 음성 통신</span>
-        <span className={`voice-badge ${isConnected ? "online" : "offline"}`}>
-          {isConnected ? "ONLINE" : "OFFLINE"}
-        </span>
-      </div>
-      <div className="voice-body">
-        <button
-          className={`mic-btn${isConnected ? " active" : ""}${isConnecting ? " connecting" : ""}`}
-          onClick={isConnected ? disconnect : connect}
-          disabled={isConnecting}
-          title={isConnected ? "연결 해제" : "음성 연결 시작"}
-        >
-          <i className={`ti ${isConnected ? "ti-microphone" : "ti-microphone-off"}`} />
-        </button>
-        <div className="voice-hint">{hintText}</div>
-        <div className="voice-robot">
-          <i className="ti ti-antenna" /> {connectedRobot ?? firstRobot} · {isConnected ? "연결됨" : "연결 안됨"}
-        </div>
-      </div>
     </div>
   );
 }
