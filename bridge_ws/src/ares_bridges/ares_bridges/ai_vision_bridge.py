@@ -1,30 +1,16 @@
 #!/usr/bin/env python3
-import os
-import sys
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import CompressedImage
-from cv_bridge import CvBridge
 import requests
 
-DATABASE_DIR = os.path.expanduser("~/rescue_amr_project/database")
-if DATABASE_DIR not in sys.path:
-    sys.path.append(DATABASE_DIR)
 
-from survivor_identity.face_identification.models import load_models
-from survivor_identity.face_identification.embedding import embed_image
-
-
-class AiVisionBridge(Node):  # 💡 클래스명 변경
+class AiVisionBridge(Node):
     def __init__(self):
         super().__init__("ai_vision_bridge")
-        self.bridge = CvBridge()
         self.declare_parameter("robot_id", "robot5")
         self.robot_id = self.get_parameter("robot_id").value
-
-        self.get_logger().info("🧠 InsightFace(buffalo_l) 모델 로딩 중...")
-        self.models = load_models(model_name="buffalo_l", ctx_id=-1)
 
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -32,39 +18,36 @@ class AiVisionBridge(Node):  # 💡 클래스명 변경
             depth=5,
         )
 
-        # 동적 로봇 ID 할당
         topic_name = f"/{self.robot_id}/survivor/face_crop/compressed"
         self.create_subscription(
             CompressedImage, topic_name, self.crop_callback, qos_profile
         )
 
+        # 💡 특징 벡터 추출 및 PostgreSQL 조회를 전담하는 도커 백엔드 API 주소로 타겟 배정
         self.flask_url = "http://127.0.0.1:8001/api/survivors/identify"
-        self.get_logger().info(f"📡 [AI 비전 브릿지] {topic_name} 수신 대기 중...")
+        self.get_logger().info(
+            f"🧠 [AI 비전 브릿지] 가동 - 단말기 이미지 바이패스 준비 완료"
+        )
 
     def crop_callback(self, msg: CompressedImage):
         try:
-            cv_image = self.bridge.compressed_imgmsg_to_cv2(
-                msg, desired_encoding="bgr8"
-            )
-            embedding = embed_image(
-                cv_image, self.models.recognition, self.models.landmark
-            )
+            # 💡 CompressedImage 메시지 내의 롭된 바이너리 데이터 버퍼를 그대로 획득
+            image_bytes = bytes(msg.data)
 
-            if embedding is None:
-                return
+            # 멀티파트 폼데이터 구조로 묶어서 도커의 buffalo 연산 라인으로 즉시 바이패스
+            files = {
+                "face_image": (f"{self.robot_id}_crop.jpg", image_bytes, "image/jpeg")
+            }
 
-            res = requests.post(
-                self.flask_url, json={"vector": embedding.tolist()}, timeout=2.0
-            )
-            data = res.json()
-
-            if res.status_code == 200 and data.get("matched"):
-                user = data["data"]
-                self.get_logger().info(
-                    f"🎯 [DB 매칭 완료] {user['name']} 님 식별! (유사도: {user['similarity']}%)"
-                )
+            res = requests.post(self.flask_url, files=files, timeout=3.0)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("matched"):
+                    self.get_logger().info(
+                        f"🎯 [식별 성공] {data['data']['name']} 님 포착 (유사도: {data['data']['similarity']}%)"
+                    )
         except Exception as e:
-            self.get_logger().error(f"❌ AI 연산 또는 통신 에러: {e}")
+            self.get_logger().error(f"비전 폼 전송 예외: {e}")
 
 
 def main(args=None):

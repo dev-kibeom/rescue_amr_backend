@@ -6,6 +6,7 @@ bridge_ws/
     └── ares_bridges
         ├── ares_bridges
         │   ├── ai_vision_bridge.py
+        │   ├── ares_dummy_teleop.py
         │   ├── __init__.py
         │   ├── robot_status_bridge.py
         │   └── webrtc_bridge.py
@@ -21,7 +22,7 @@ bridge_ws/
             ├── test_flake8.py
             └── test_pep257.py
 
-6 directories, 12 files
+6 directories, 13 files
 
 
 
@@ -142,6 +143,7 @@ setup(
             "webrtc_bridge = ares_bridges.webrtc_bridge:main",
             "robot_status_bridge = ares_bridges.robot_status_bridge:main",
             "ai_vision_bridge = ares_bridges.ai_vision_bridge:main",
+            "ares_dummy_teleop = ares_bridges.ares_dummy_teleop:main",
         ],
     },
 )
@@ -278,8 +280,15 @@ class WebrtcBridge(Node):
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
         )
+
+        image_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=2,
+        )
+
         self.create_subscription(
-            Image, self.topic_name, self.image_callback, qos
+            Image, self.topic_name, self.image_callback, image_qos
         )
         self.create_subscription(
             BatteryState, f"/{self.robot_id}/battery_state", self.battery_callback, 10
@@ -293,7 +302,7 @@ class WebrtcBridge(Node):
             OccupancyGrid,
             f"/{self.robot_id}/camera_coverage",
             self.coverage_callback,
-            10,
+            qos,
         )
 
         self.get_logger().info(
@@ -475,38 +484,150 @@ def main():
 if __name__ == "__main__":
     main()
 
+=== File: bridge_ws/src/ares_bridges/ares_bridges/ares_dummy_teleop.py ===
+
+#!/usr/bin/env python3
+import rclpy
+from rclpy.node import Node
+import numpy as np
+import math
+from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import OccupancyGrid, Path
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
+
+
+class AresDummyTeleop(Node):
+    def __init__(self):
+        super().__init__("ares_dummy_teleop")
+        self.declare_parameter("robot_id", "robot5")
+        self.robot_id = self.get_parameter("robot_id").value
+
+        # 💡 [핵심 교정]: 브릿지 노드와 결합할 TRANSIENT_LOCAL 프로파일 명시적 정의
+        map_qos = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,  # 👈 일시적 보존 설정으로 통일
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
+
+        sensor_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=5,
+        )
+
+        # 💡 보정된 QoS 프로파일을 기반으로 퍼블리셔 등록
+        self.map_pub = self.create_publisher(
+            OccupancyGrid, f"/{self.robot_id}/map", map_qos
+        )
+        self.path_pub = self.create_publisher(
+            Path, f"/{self.robot_id}/coverage/path", map_qos
+        )
+        self.cov_pub = self.create_publisher(
+            OccupancyGrid, f"/{self.robot_id}/camera_coverage", sensor_qos
+        )
+
+        self.map_width = 100
+        self.map_height = 100
+        self.resolution = 0.2
+        self.map_data = np.full((self.map_height, self.map_width), -1, dtype=np.int8)
+
+        self.map_data[30:35, 20:70] = 100
+        self.map_data[65:70, 40:90] = 100
+
+        self.robot_x = 2.0
+        self.robot_y = 2.0
+        self.angle = 0.0
+        self.path_msg = Path()
+        self.path_msg.header.frame_id = "map"
+
+        self.create_timer(0.3, self.update_simulation)
+        self.get_logger().info(
+            f"🎮 [더미노드 QoS 보정] 가동 완료 - {self.robot_id} 토픽 스트리밍 시작"
+        )
+
+    def update_simulation(self):
+        self.angle += 0.05
+        self.robot_x += 0.15 * math.cos(self.angle)
+        self.robot_y += 0.15 * math.sin(self.angle)
+
+        grid_x = int(self.robot_x / self.resolution)
+        grid_y = int(self.robot_y / self.resolution)
+
+        for dy in range(-6, 7):
+            for dx in range(-6, 7):
+                nx, ny = grid_x + dx, grid_y + dy
+                if 0 <= nx < self.map_width and 0 <= ny < self.map_height:
+                    if dx * dx + dy * dy <= 36 and self.map_data[ny, nx] != 100:
+                        self.map_data[ny, nx] = 0
+
+        stamp = self.get_clock().now().to_msg()
+
+        map_msg = OccupancyGrid()
+        map_msg.header.stamp = stamp
+        map_msg.header.frame_id = "map"
+        map_msg.info.resolution = self.resolution
+        map_msg.info.width = self.map_width
+        map_msg.info.height = self.map_height
+        map_msg.data = self.map_data.flatten().tolist()
+        self.map_pub.publish(map_msg)
+
+        pose_stamped = PoseStamped()
+        pose_stamped.header.stamp = stamp
+        pose_stamped.pose.position.x = self.robot_x
+        pose_stamped.pose.position.y = self.robot_y
+        self.path_msg.poses.append(pose_stamped)
+        self.path_pub.publish(self.path_msg)
+
+        # 5. camera_coverage (가시 범위 음영) 실제 미터 좌표계 기반 역연산 매핑으로 보정
+        cov_msg = OccupancyGrid()
+        cov_msg.header.stamp = stamp
+        cov_msg.header.frame_id = "map"
+        cov_msg.info.resolution = self.resolution
+        cov_msg.info.width = self.map_width
+        cov_msg.info.height = self.map_height
+
+        cov_data = np.zeros_like(self.map_data)
+        # 로봇 현재 인덱스 기준 주변만 마킹
+        for dy in range(-3, 4):
+            for dx in range(-3, 4):
+                nx, ny = grid_x + dx, grid_y + dy
+                if 0 <= nx < self.map_width and 0 <= ny < self.map_height:
+                    cov_data[ny, nx] = 100
+        cov_msg.data = cov_data.flatten().tolist()
+        self.cov_pub.publish(cov_msg)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = AresDummyTeleop()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()
+
 === File: bridge_ws/src/ares_bridges/ares_bridges/__init__.py ===
 
 
 === File: bridge_ws/src/ares_bridges/ares_bridges/ai_vision_bridge.py ===
 
 #!/usr/bin/env python3
-import os
-import sys
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import CompressedImage
-from cv_bridge import CvBridge
 import requests
 
-DATABASE_DIR = os.path.expanduser("~/rescue_amr_project/database")
-if DATABASE_DIR not in sys.path:
-    sys.path.append(DATABASE_DIR)
 
-from survivor_identity.face_identification.models import load_models
-from survivor_identity.face_identification.embedding import embed_image
-
-
-class AiVisionBridge(Node):  # 💡 클래스명 변경
+class AiVisionBridge(Node):
     def __init__(self):
         super().__init__("ai_vision_bridge")
-        self.bridge = CvBridge()
         self.declare_parameter("robot_id", "robot5")
         self.robot_id = self.get_parameter("robot_id").value
-
-        self.get_logger().info("🧠 InsightFace(buffalo_l) 모델 로딩 중...")
-        self.models = load_models(model_name="buffalo_l", ctx_id=-1)
 
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -514,39 +635,36 @@ class AiVisionBridge(Node):  # 💡 클래스명 변경
             depth=5,
         )
 
-        # 동적 로봇 ID 할당
         topic_name = f"/{self.robot_id}/survivor/face_crop/compressed"
         self.create_subscription(
             CompressedImage, topic_name, self.crop_callback, qos_profile
         )
 
+        # 💡 특징 벡터 추출 및 PostgreSQL 조회를 전담하는 도커 백엔드 API 주소로 타겟 배정
         self.flask_url = "http://127.0.0.1:8001/api/survivors/identify"
-        self.get_logger().info(f"📡 [AI 비전 브릿지] {topic_name} 수신 대기 중...")
+        self.get_logger().info(
+            f"🧠 [AI 비전 브릿지] 가동 - 단말기 이미지 바이패스 준비 완료"
+        )
 
     def crop_callback(self, msg: CompressedImage):
         try:
-            cv_image = self.bridge.compressed_imgmsg_to_cv2(
-                msg, desired_encoding="bgr8"
-            )
-            embedding = embed_image(
-                cv_image, self.models.recognition, self.models.landmark
-            )
+            # 💡 CompressedImage 메시지 내의 롭된 바이너리 데이터 버퍼를 그대로 획득
+            image_bytes = bytes(msg.data)
 
-            if embedding is None:
-                return
+            # 멀티파트 폼데이터 구조로 묶어서 도커의 buffalo 연산 라인으로 즉시 바이패스
+            files = {
+                "face_image": (f"{self.robot_id}_crop.jpg", image_bytes, "image/jpeg")
+            }
 
-            res = requests.post(
-                self.flask_url, json={"vector": embedding.tolist()}, timeout=2.0
-            )
-            data = res.json()
-
-            if res.status_code == 200 and data.get("matched"):
-                user = data["data"]
-                self.get_logger().info(
-                    f"🎯 [DB 매칭 완료] {user['name']} 님 식별! (유사도: {user['similarity']}%)"
-                )
+            res = requests.post(self.flask_url, files=files, timeout=3.0)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("matched"):
+                    self.get_logger().info(
+                        f"🎯 [식별 성공] {data['data']['name']} 님 포착 (유사도: {data['data']['similarity']}%)"
+                    )
         except Exception as e:
-            self.get_logger().error(f"❌ AI 연산 또는 통신 에러: {e}")
+            self.get_logger().error(f"비전 폼 전송 예외: {e}")
 
 
 def main(args=None):
@@ -569,27 +687,11 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPo
 import requests
 import cv2
 import numpy as np
-from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
-from nav_msgs.msg import Odometry, OccupancyGrid  # 💡 OccupancyGrid 추가
+import threading  # 💡 [핵심 추가] requests 블로킹을 방지하기 위한 스레드 모듈
+from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import OccupancyGrid, Path
 
-try:
-    from interfaces.msg import TargetPose
-
-    HAS_TARGET_POSE = True
-except ImportError:
-    HAS_TARGET_POSE = False
-    print(
-        "⚠️ [주의] interfaces/TargetPose 모듈이 없어 YOLO 탐지 DB 전송 기능이 비활성화됩니다."
-    )
-
-FLASK_BASE = "http://127.0.0.1:8001/api"
-
-
-def _extract_xy(msg, path: str):
-    obj = msg
-    for attr in path.split("."):
-        obj = getattr(obj, attr)
-    return float(obj.x), float(obj.y)
+FLASK_BASE = "http://localhost:8001/api"
 
 
 class RobotStatusBridge(Node):
@@ -598,21 +700,20 @@ class RobotStatusBridge(Node):
         self.declare_parameter("robot_id", "robot5")
         self.robot_id = self.get_parameter("robot_id").value
 
-        # 지도는 맵서버가 처음 열릴 때 과거 데이터를 들고 와야 하므로 transient_local 프로파일 적용
+        # Nav2/더미노드와 완벽히 호환되는 Transient Local QoS 설정
         map_qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
         )
-        sensor_qos = QoSProfile(
-            reliability=ReliabilityPolicy.BEST_EFFORT,
-            durability=DurabilityPolicy.VOLATILE,
-            history=HistoryPolicy.KEEP_LAST,
-            depth=5,
-        )
 
-        # ── 토픽 구독 ──────────────────────────────────────────────────────────
+        self.map_sub = self.create_subscription(
+            OccupancyGrid, f"/{self.robot_id}/map", self.map_callback, map_qos
+        )
+        self.path_sub = self.create_subscription(
+            Path, f"/{self.robot_id}/coverage/path", self.path_callback, map_qos
+        )
         self.bt_sub = self.create_subscription(
             PoseStamped,
             f"/{self.robot_id}/report/survivor_found",
@@ -620,28 +721,27 @@ class RobotStatusBridge(Node):
             10,
         )
 
-        # 💡 [추가] 맵 토픽 구독 시작
-        self.map_sub = self.create_subscription(
-            OccupancyGrid, f"/{self.robot_id}/map", self.map_callback, map_qos
-        )
-
-        if HAS_TARGET_POSE:
-            self.yolo_sub = self.create_subscription(
-                TargetPose,
-                f"/{self.robot_id}/yolo/target_pose",
-                self.yolo_detection_callback,
-                qos_profile=sensor_qos,
-            )
-
+        self._last_x = 0.0
+        self._last_y = 0.0
         self._pose_received = False
-        self._try_pose_topics(sensor_qos)
-        self.create_timer(1.0, self._pose_heartbeat)
 
+        # 1초 주기로 위치 동기화 실행
+        self.create_timer(1.0, self._pose_heartbeat)
         self.get_logger().info(
-            f"✅ [로봇 상태 브릿지] 가동 완료 — robot_id={self.robot_id}"
+            f"🚀 [ARES 멀티스레드 브릿지] 구동 시작 - ID: {self.robot_id}"
         )
 
-    # 💡 [추가] OccupancyGrid 토픽을 가로채서 이미지 바이너리로 백엔드 전송
+    def path_callback(self, msg: Path):
+        if not msg.poses:
+            return
+        try:
+            latest_pose = msg.poses[-1].pose.position
+            self._last_x = float(latest_pose.x)
+            self._last_y = float(latest_pose.y)
+            self._pose_received = True
+        except Exception as e:
+            self.get_logger().error(f"❌ 경로 좌표 추출 에러: {e}")
+
     def map_callback(self, msg: OccupancyGrid):
         try:
             width = msg.info.width
@@ -649,22 +749,16 @@ class RobotStatusBridge(Node):
             if width == 0 or height == 0:
                 return
 
-            # 1. 1차원 데이터 배열을 2차원 넘파이 행렬로 재정렬
             data = np.array(msg.data, dtype=np.int8).reshape((height, width))
-
-            # 2. 맵 데이터 값 규칙 매핑 (0: 빈공간->흰색, 100: 벽->검은색, -1: 미탐사->회색)
             img = np.zeros((height, width), dtype=np.uint8)
-            img[data == 0] = 255  # 탐사 완료 영역 (White)
-            img[data == 100] = 0  # 벽/장애물 (Black)
-            img[data == -1] = 127  # 미탐사 구역 (Gray)
+            img[data == 0] = 255
+            img[data == 100] = 0
+            img[data == -1] = 127
 
-            # 3. 데이터 시각적 가독성을 위해 상하 반전 (ROS 좌표계 -> OpenCV 이미지 좌표계 대응)
             img = cv2.flip(img, 0)
-
-            # 4. 메모리 상에서 PNG 포맷으로 압축 이미지 인코딩
             _, img_encoded = cv2.imencode(".png", img)
 
-            # 5. Flask 백엔드로 이미지 바이너리를 멀티파트 폼 데이터로 슛!
+            # 💡 [핵심 교정]: 무거운 맵 이미지 전송 로직을 백그라운드 데몬 스레드로 격리하여 ROS2 스핀 마비 방지
             files = {
                 "map_image": (
                     f"{self.robot_id}_map.png",
@@ -672,77 +766,49 @@ class RobotStatusBridge(Node):
                     "image/png",
                 )
             }
-            requests.post(
-                f"{FLASK_BASE}/robots/{self.robot_id}/map", files=files, timeout=2.0
-            )
+            threading.Thread(
+                target=self._executor_post_files,
+                args=(f"{FLASK_BASE}/robots/{self.robot_id}/map", files),
+                daemon=True,
+            ).start()
 
-            self.get_logger().info(
-                f"🎯 [지도 동기화] 백엔드로 실시간 맵 전송 성공 ({width}x{height})"
-            )
         except Exception as e:
-            self.get_logger().error(f"❌ 지도 가공 및 전송 실패: {e}")
-
-    def _try_pose_topics(self, qos):
-        PRIORITY = [
-            (f"/{self.robot_id}/robot_pose", PoseStamped, "pose.position"),
-            (
-                f"/{self.robot_id}/amcl_pose",
-                PoseWithCovarianceStamped,
-                "pose.pose.position",
-            ),
-            (f"/{self.robot_id}/odom", Odometry, "pose.pose.position"),
-        ]
-        for topic, msg_type, path in PRIORITY:
-            try:
-                self.create_subscription(
-                    msg_type,
-                    topic,
-                    lambda msg, p=path: self._pose_callback(msg, p),
-                    qos_profile=qos,
-                )
-                self.get_logger().info(f"📍 위치 토픽 구독: {topic}")
-                break
-            except Exception:
-                pass
-
-    def _pose_callback(self, msg, path: str):
-        try:
-            self._last_x, self._last_y = _extract_xy(msg, path)
-            self._pose_received = True
-        except Exception:
-            pass
+            self.get_logger().error(f"❌ 지도 이미지 인코딩 실패: {e}")
 
     def _pose_heartbeat(self):
-        if self._pose_received:
-            self._send_to_flask(
-                f"{FLASK_BASE}/robots/{self.robot_id}/pose",
-                {"x": self._last_x, "y": self._last_y, "status": "MOVING"},
-                "위치",
-            )
+        if not self._pose_received:
+            return
+
+        data = {"x": self._last_x, "y": self._last_y, "status": "MOVING"}
+        # 💡 하트비트 전송도 비동기 스레드로 위임하여 1.0초 타이머 주기를 칼같이 사수합니다.
+        threading.Thread(
+            target=self._executor_post_json,
+            args=(f"{FLASK_BASE}/robots/{self.robot_id}/pose", data),
+            daemon=True,
+        ).start()
 
     def bt_report_callback(self, msg: PoseStamped):
         data = {
             "x": msg.pose.position.x,
             "y": msg.pose.position.y,
-            "message": "[임무 성공] 생존자 확보",
+            "message": "[임무 성공] 생존자 확보 완료",
         }
-        self._send_to_flask(
-            f"{FLASK_BASE}/robots/{self.robot_id}/nav_success", data, "BT 임무완료"
-        )
+        threading.Thread(
+            target=self._executor_post_json,
+            args=(f"{FLASK_BASE}/robots/{self.robot_id}/nav_success", data),
+            daemon=True,
+        ).start()
 
-    def yolo_detection_callback(self, msg):
-        data = {
-            "id": msg.class_name,
-            "detected_x": msg.pose.position.x,
-            "detected_y": msg.pose.position.y,
-            "similarity": float(msg.confidence),
-            "robot_id": self.robot_id,
-        }
-        self._send_to_flask(f"{FLASK_BASE}/survivor-logs", data, "AI 식별")
-
-    def _send_to_flask(self, url, data, label):
+    # ─── 💡 백그라운드 전용 네트워크 실행 워커(Worker) 함수 ───
+    def _executor_post_files(self, url, files):
         try:
-            requests.post(url, json=data, timeout=1.0)
+            requests.post(url, files=files, timeout=2.0)
+        except Exception:
+            pass
+
+    def _executor_post_json(self, url, data):
+        try:
+            requests.post(url, json=data, timeout=1.5)
         except Exception:
             pass
 

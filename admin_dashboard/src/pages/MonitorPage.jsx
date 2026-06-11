@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+// 1. 💡 최상단에 useRef를 추가로 불러옵니다.
+import { useEffect, useRef, useState } from "react";
 import AresShell from "../components/AresShell";
 import ErrorBoundary from "../components/ErrorBoundary";
 import PanelHeader from "../components/PanelHeader";
@@ -9,7 +10,8 @@ import useMonitor from "../hooks/useMonitor";
 import { navigate } from "../router/aresRouting";
 
 const WEBRTC_PORT = (idx) => 8002 + idx;
-const WEBRTC_BASE = (idx) => `http://localhost:${WEBRTC_PORT(idx)}`;
+// 💡 주소는 로컬 다이렉트 바인딩으로 유지합니다.
+const WEBRTC_BASE = (idx) => `http://localhost:8002`;
 const ICE_SERVERS = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "turn:openrelay.metered.ca:80",   username: "openrelayproject", credential: "openrelayproject" },
@@ -37,9 +39,16 @@ function formatDuration(totalSeconds) {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+// 2. 💡 CameraPanel 컴포넌트 내부 완전 교체
 function CameraPanel({ title, tone, robotId, robotIndex, cameraTime, onTelemetry, shouldConnect }) {
   const [connState, setConnState] = useState("idle");
   const [videoEl, setVideoEl] = useState(null);
+
+  // 💡 [핵심 픽스 1]: 1초마다 바뀌는 함수를 ref로 캐싱하여 재렌더링 폭주를 막습니다.
+  const onTelemetryRef = useRef(onTelemetry);
+  useEffect(() => {
+    onTelemetryRef.current = onTelemetry;
+  }, [onTelemetry]);
 
   useEffect(() => {
     if (!shouldConnect) {
@@ -62,7 +71,8 @@ function CameraPanel({ title, tone, robotId, robotIndex, cameraTime, onTelemetry
         dataChannel.onmessage = (event) => {
           if (!active) return;
           const data = JSON.parse(event.data);
-          if (onTelemetry) onTelemetry(robotId, data);
+          // 💡 캐싱된 ref를 통해 함수 호출
+          if (onTelemetryRef.current) onTelemetryRef.current(robotId, data);
         };
 
         peerConn.ontrack = (e) => {
@@ -86,21 +96,35 @@ function CameraPanel({ title, tone, robotId, robotIndex, cameraTime, onTelemetry
 
         const offer = await peerConn.createOffer();
         await peerConn.setLocalDescription(offer);
+        
         await waitForIceGathering(peerConn);
+        if (!active) { peerConn.close(); return; }
 
-        const res = await fetch(`${WEBRTC_BASE(robotIndex)}/offer`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sdp: offer.sdp, type: offer.type }),
-        });
+        let res;
+        try {
+          res = await fetch(`${WEBRTC_BASE(robotIndex)}/offer`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sdp: offer.sdp, type: offer.type }),
+          });
+        } catch (fetchErr) {
+          console.error("🚨 [WebRTC] Fetch 네트워크 연결 실패:", fetchErr);
+          if (active) setConnState("error");
+          if (peerConn) { peerConn.close(); peerConn = null; }
+          return;
+        }
 
-        if (!res.ok) throw new Error(`시그널링 실패: ${res.status}`);
+        if (!res.ok) {
+          const errText = await res.text();
+          console.error("🚨 [WebRTC] 서버 거부 코드:", res.status, errText);
+          throw new Error(`시그널링 실패: ${res.status}`);
+        }
 
         const answer = await res.json();
         await peerConn.setRemoteDescription(new RTCSessionDescription(answer));
       } catch (err) {
         if (active) { setConnState("error"); }
-        if (peerConn) { peerConn.close(); }
+        if (peerConn) { peerConn.close(); peerConn = null; }
       }
     }
 
@@ -108,9 +132,10 @@ function CameraPanel({ title, tone, robotId, robotIndex, cameraTime, onTelemetry
 
     return () => {
       active = false;
-      if (peerConn) peerConn.close();
+      if (peerConn) { peerConn.close(); peerConn = null; }
     };
-  }, [robotId, robotIndex, videoEl, onTelemetry, shouldConnect]);
+  // 💡 [핵심 픽스 2]: 의존성 배열에서 onTelemetry를 제거하여 1초마다 철거되는 비극 차단!
+  }, [robotId, robotIndex, videoEl, shouldConnect]);
 
   useEffect(() => {
     if (connState !== "error" || !shouldConnect) return;
@@ -215,7 +240,6 @@ export default function MonitorPage() {
                   />
                   <div className="map-svg-bg" style={{ position: "absolute", inset: 0, zIndex: 0 }} />
                   
-                  {/* 💡 [정상 전수 복구] 지능형 2중 매핑 엔진 스코프 클리닝 완결 */}
                   {Object.keys(cameraCoverage).map((id) => {
                     const points = cameraCoverage[id] || [];
                     return points.map((p, idx) => {
@@ -376,6 +400,9 @@ export default function MonitorPage() {
           const canConnect = isRealRobot && robot.status !== "ERROR" && connStatus.db === "ok";
           const toneColor = idx === 0 ? "green" : "orange";
 
+          // 💡 [근본적 포트 싱크 매칭]: 문자열이나 순서에 구애받지 않고 실제 기동중인 robot5(포트 8002)로 다이렉트 픽스
+          const targetPortIndex = robotId.includes("robot5") ? 0 : idx;
+
           return (
             <section className="cell cam-cell" key={robotId}>
               <PanelHeader title={`카메라 · ${robotId}`} tone={toneColor} />
@@ -384,7 +411,7 @@ export default function MonitorPage() {
                   title={`카메라 · ${robotId}`}
                   tone={toneColor}
                   robotId={robotId}
-                  robotIndex={idx}
+                  robotIndex={targetPortIndex} 
                   cameraTime={cameraTime}
                   shouldConnect={canConnect}
                   onTelemetry={(id, data) => {

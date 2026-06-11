@@ -1,0 +1,2594 @@
+=========================================
+ PROJECT DIRECTORY TREE
+=========================================
+database
+├── app
+│   ├── api
+│   │   └── endpoints.py
+│   ├── core
+│   │   ├── config.py
+│   │   └── __init__.py
+│   ├── __init__.py
+│   ├── main.py
+│   ├── models
+│   │   ├── database.py
+│   │   └── __init__.py
+│   ├── repositories
+│   │   ├── rescue_amr_repository.py
+│   │   ├── survivor_repository.py
+│   │   └── turtlebot4_repository.py
+│   ├── services
+│   │   ├── __init__.py
+│   │   ├── mqtt.py
+│   │   ├── rescue_amr_service.py
+│   │   ├── survivor_service.py
+│   │   └── turtlebot4_services.py
+│   └── static
+│       └── maps
+│           └── robot5_map.png
+├── docker-compose.yml
+├── Dockerfile
+├── init_and_run.sh
+├── requirements.txt
+├── run.py
+├── send_to_db_test.py
+├── survivor_identity
+│   ├── crop_face_bridge.py
+│   ├── face_identification
+│   │   ├── cache
+│   │   ├── config.py
+│   │   ├── embedding.py
+│   │   ├── gallery
+│   │   ├── gallery_builder.py
+│   │   ├── __init__.py
+│   │   ├── main.py
+│   │   ├── models.py
+│   │   ├── recognizer.py
+│   │   └── utils
+│   │       ├── alignment.py
+│   │       └── __init__.py
+│   ├── face_identifier.py
+│   ├── gallery_store.py
+│   ├── identify_crop_cli.py
+│   ├── identity_worker.py
+│   ├── __init__.py
+│   └── matcher.py
+└── sync_survivors.py
+
+13 directories, 39 files
+
+
+
+
+=== File: database/send_to_db_test.py ===
+
+import requests
+
+# 1. FastAPI 서버 주소 (robot1의 성공 신호)
+url = "http://127.0.0.1:8001/api/robots/robot1/nav_success"
+
+# 2. 보낼 데이터 (Pydantic 모델인 NavSuccessRequest 형식에 맞춤)
+data = {"x": 3.14, "y": -1.59, "message": "Nav2 Goal Reached: 301호 도착 완료 (테스트)"}
+
+# 3. HTTP POST 요청 전송
+try:
+    response = requests.post(url, json=data)
+    print("상태 코드:", response.status_code)
+    print("응답 내용:", response.json())
+except Exception as e:
+    print("전송 실패:", e)
+
+=== File: database/sync_survivors.py ===
+
+"""
+Supabase survivors 테이블 → 로컬 survivors 테이블 동기화 스크립트
+실행: python sync_survivors.py
+"""
+
+import os
+from dotenv import load_dotenv
+from supabase import create_client
+from app.core import config
+import psycopg2
+
+current_dir = os.path.dirname(__file__)
+env_path = os.path.join(current_dir, "../admin_dashboard/.env")
+
+# .env 로드
+load_dotenv(dotenv_path=env_path)
+
+# ── Supabase 설정 ──────────────────────────────
+SUPABASE_URL = config.SUPABASE_URL
+SUPABASE_KEY = config.SUPABASE_KEY
+
+# ── 로컬 PostgreSQL 설정 ───────────────────────
+LOCAL_DB = {
+    "host": config.DB_HOST,
+    "port": config.DB_PORT,
+    "dbname": config.DB_NAME,
+    "user": config.DB_USER,
+    "password": config.DB_PASSWORD,
+}
+
+def fetch_from_supabase():
+    """Supabase survivors 테이블에서 인적정보 조회 (face 제외)"""
+    client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    res = client.table("survivors").select("id, name, sex, phone_number, face").execute()
+    return res.data
+
+
+def insert_to_local(rows):
+    """로컬 survivors 테이블에 INSERT (중복 id는 UPDATE)"""
+    conn = psycopg2.connect(**LOCAL_DB)
+    cur = conn.cursor()
+
+    for row in rows:
+        cur.execute("""
+            INSERT INTO survivors (id, name, sex, phone_number)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET
+                name         = EXCLUDED.name,
+                sex          = EXCLUDED.sex,
+                phone_number = EXCLUDED.phone_number
+        """, (row["id"], row["name"], row["sex"], row["phone_number"]))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+    print(f"✅ {len(rows)}명 동기화 완료")
+
+
+if __name__ == "__main__":
+    print("📡 Supabase에서 인적정보 가져오는 중...")
+    rows = fetch_from_supabase()
+    print(f"   {len(rows)}명 조회됨")
+
+    print("💾 로컬 DB에 저장 중...")
+    insert_to_local(rows)
+
+=== File: database/app/core/config.py ===
+
+import os
+from dotenv import load_dotenv
+
+# config.py 파일의 위치를 기준으로 database/ 폴더의 절대 경로를 계산합니다.
+# __file__ = database/app/core/config.py
+CORE_DIR = os.path.dirname(os.path.abspath(__file__))  # database/app/core
+APP_DIR = os.path.dirname(CORE_DIR)  # database/app
+BASE_DIR = os.path.dirname(APP_DIR)  # database/ (프로젝트 루트)
+
+# 절대 경로를 기반으로 .env 파일 로드
+dotenv_path = os.path.join(BASE_DIR, ".env")
+load_dotenv(dotenv_path=dotenv_path)
+
+# ==========================================
+# 환경 변수 매핑
+# ==========================================
+SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
+SERVER_PORT = int(os.getenv("SERVER_PORT", 8001))
+MQTT_BROKER_IP = os.getenv("MQTT_BROKER_IP", "127.0.0.1")
+MQTT_PORT = int(os.getenv("MQTT_PORT", 1883))
+
+# 도커 컴포즈 환경 변수가 없으면 기본 로컬값(localhost)을 사용합니다.
+DB_USER = os.getenv("DB_USER", "admin")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "rokey1234")
+DB_HOST = os.getenv("DB_HOST", "rescue_db")  # 도커 내부에서는 서비스명 'rescue_db'로 통신
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "rescue_amr_db")
+
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+
+# 최종 SQLAlchemy DB URL (PostgreSQL 매핑)
+DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+=== File: database/app/core/__init__.py ===
+
+
+=== File: database/app/api/endpoints.py ===
+
+import uuid
+import threading
+import urllib.request
+import cv2
+import os
+import numpy as np
+import bcrypt as _bcrypt
+from flask import Blueprint, request, jsonify, current_app
+from supabase import create_client
+
+from app.core import config
+from app.models.database import db, IncidentLog, Survivor, SurvivorLog, RescueRobot
+from app.services.rescue_amr_service import RescueAMRService
+from app.services.survivor_service import SurvivorService
+from app.repositories.rescue_amr_repository import RescueAmrRepository
+
+api_bp = Blueprint("api", __name__)
+
+# =====================================================================
+# [전역 상태] 비동기 동기화 상태 저장소
+# =====================================================================
+sync_progress = {
+    "is_running": False,
+    "total": 0,
+    "current": 0,
+    "message": "대기 중",
+    "error": None,
+}
+
+
+def convert_supabase_url(img_url):
+    """Supabase 스토리지 상대경로를 Public 절대경로로 변환"""
+    if img_url and not img_url.startswith("http"):
+        return f"{config.SUPABASE_URL}/storage/v1/object/public/{img_url}"
+    return img_url
+
+
+# =====================================================================
+# 1. 인증 (Auth) API
+# =====================================================================
+@api_bp.route("/login", methods=["POST"])
+def login():
+    data = request.get_json()
+    username = data.get("username")
+    password = data.get("password", "").encode("utf-8")
+
+    try:
+        sb = create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
+        rows = (
+            sb.table("auth_users")
+            .select("password_hash")
+            .eq("username", username)
+            .execute()
+            .data
+        )
+    except Exception:
+        return jsonify(
+            {"status": "error", "message": "인증 서버에 연결할 수 없습니다."}
+        ), 503
+
+    if not rows or not _bcrypt.checkpw(
+        password, rows[0]["password_hash"].strip().encode("utf-8")
+    ):
+        return jsonify(
+            {"status": "error", "message": "아이디 또는 비밀번호가 틀렸습니다."}
+        ), 401
+
+    return jsonify({"ok": True, "username": username}), 200
+
+
+# =====================================================================
+# 2. AI 비동기 동기화 (Sync) API
+# =====================================================================
+def async_sync_worker(app_context):
+    """Flask 메인 컨텍스트를 격리하여 백그라운드에서 AI 연산 수행"""
+    global sync_progress
+
+    with app_context:
+        # 무거운 AI 모델은 서버 시작 속도에 영향을 주지 않도록 스레드 내부에서 지연 임포트
+        from survivor_identity.face_identification.models import load_models
+        from survivor_identity.face_identification.embedding import embed_image
+        from sync_survivors import fetch_from_supabase
+
+        try:
+            sync_progress["message"] = "Supabase에서 원본 데이터 수신 중..."
+            rows = fetch_from_supabase()
+
+            sync_progress["total"] = len(rows)
+            sync_progress["current"] = 0
+            sync_progress["message"] = "AI 인식 모델(InsightFace) 메모리 로드 중..."
+
+            models = load_models(model_name="buffalo_l", ctx_id=-1)
+
+            for row in rows:
+                s_id, name = row["id"], row["name"]
+                sync_progress["message"] = (
+                    f"[{name}] 신원 동기화 및 512차원 특징점 계산 중..."
+                )
+
+                img_url = convert_supabase_url(row.get("face"))
+                survivor = Survivor.query.filter_by(id=s_id).first() or Survivor(
+                    id=s_id
+                )
+
+                survivor.name = name
+                survivor.sex = row.get("sex")
+                survivor.phone_number = row.get("phone_number")
+                survivor.face = img_url
+                db.session.add(survivor)
+                db.session.commit()
+
+                if img_url:
+                    try:
+                        req = urllib.request.urlopen(img_url, timeout=3.0)
+                        arr = np.asarray(bytearray(req.read()), dtype=np.uint8)
+                        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+
+                        embedding = embed_image(
+                            img, models.recognition, models.landmark
+                        )
+                        if embedding is not None:
+                            survivor.face_vector = embedding.tolist()
+                            db.session.commit()
+                    except Exception as img_err:
+                        print(f"⚠️ [{name}] 이미지 처리 건너뜀: {img_err}", flush=True)
+
+                sync_progress["current"] += 1
+
+            sync_progress["message"] = "모든 구조대상자 AI 동기화 완료!"
+        except Exception as e:
+            db.session.rollback()
+            sync_progress["error"] = str(e)
+            sync_progress["message"] = f"❌ 동기화 실패: {str(e)}"
+        finally:
+            sync_progress["is_running"] = False
+
+
+@api_bp.route("/sync/start", methods=["POST"])
+def start_integration_sync():
+    global sync_progress
+    if sync_progress["is_running"]:
+        return jsonify(
+            {"status": "processing", "message": "이미 인공지능 동기화가 진행 중입니다."}
+        ), 200
+
+    sync_progress.update({"is_running": True, "error": None, "current": 0})
+
+    app_context = current_app.app_context()
+    threading.Thread(target=async_sync_worker, args=(app_context,), daemon=True).start()
+
+    return jsonify(
+        {"status": "started", "message": "AI 특징점 분석 백그라운드 태스크 가동 완료"}
+    ), 200
+
+
+@api_bp.route("/sync/status", methods=["GET"])
+def get_integration_sync_status():
+    return jsonify(sync_progress), 200
+
+
+# =====================================================================
+# 3. 로봇 상태 & 제어 (Robot) API
+# =====================================================================
+@api_bp.route("/robots", methods=["GET"])
+def get_robots():
+    try:
+        robots = RescueRobot.query.all()
+        return jsonify(
+            {
+                "db_status": "ok" if robots else "empty",
+                "robots": [
+                    {
+                        "id": r.id,
+                        "status": r.status,
+                        "pos_x": r.pos_x,
+                        "pos_y": r.pos_y,
+                        "explored_area": r.explored_area,
+                        "total_area": r.total_area,
+                    }
+                    for r in robots
+                ],
+            }
+        ), 200
+    except Exception as e:
+        return jsonify({"db_status": "error", "detail": str(e), "robots": []}), 200
+
+@api_bp.route("/robots/<robot_id>/map", methods=["POST"])
+def upload_robot_map(robot_id):
+    """💡 [추가] 브릿지 노드가 가공한 PNG 맵 이미지를 수신하여 정적 폴더에 저장"""
+    if "map_image" not in request.files:
+        return jsonify({"error": "No map file content"}), 400
+
+    file = request.files["map_image"]
+    if file.filename == "":
+        return jsonify({"error": "No filename"}), 400
+
+    try:
+        # Flask 어플리케이션의 내부 static 폴더 내부에 'maps' 디렉토리 경로 지정
+        # 예: /workspace/app/static/maps/
+        static_maps_dir = os.path.join(current_app.static_folder, "maps")
+
+        # 폴더가 없으면 에러 방지를 위해 자동 생성
+        if not os.path.exists(static_maps_dir):
+            os.makedirs(static_maps_dir, exist_ok=True)
+
+        # 저장될 파일명 확정 (예: robot5_map.png)
+        filename = f"{robot_id}_map.png"
+        file_path = os.path.join(static_maps_dir, filename)
+
+        # 기존 맵 이미지 위에 새로운 실시간 맵을 덮어쓰기(Overwrite)
+        file.save(file_path)
+
+        return jsonify({"ok": True, "path": f"/static/maps/{filename}"}), 200
+    except Exception as e:
+        print(f"❌ [API] 지반 지도 파일 저장 실패: {str(e)}", flush=True)
+        return jsonify({"error": str(e)}), 500
+    
+@api_bp.route("/robots/<robot_id>/pose", methods=["POST"])
+def update_robot_pose(robot_id):
+    data = request.get_json()
+    RescueAMRService.update_pose(
+        robot_id=robot_id,
+        x=data.get("x", 0.0),
+        y=data.get("y", 0.0),
+        status=data.get("status"),
+        battery=data.get("battery"),
+    )
+    return jsonify({"ok": True}), 200
+
+
+@api_bp.route("/robots/<robot_id>/exploration", methods=["POST"])
+def update_robot_exploration(robot_id):
+    data = request.get_json()
+    RescueAMRService.update_exploration(
+        robot_id=robot_id,
+        explored_area=data.get("explored_area", 0.0),
+        total_area=data.get("total_area", 1.0),
+    )
+    return jsonify({"ok": True}), 200
+
+
+# =====================================================================
+# 4. 로그 수집 (Logging) API - 텍스트/이벤트 수신
+# =====================================================================
+@api_bp.route("/logs", methods=["GET"])
+def get_logs():
+    logs = RescueAmrRepository.get_recent_logs(limit=10)
+    return jsonify(
+        [
+            {"time": log.timestamp.strftime("%H:%M:%S"), "msg": log.message}
+            for log in logs
+        ]
+    ), 200
+
+
+@api_bp.route("/logs", methods=["POST"])
+def add_yolo_log():
+    """일반/장애/YOLO 인시던트 텍스트 로그 수신"""
+    data = request.get_json()
+    RescueAmrRepository.create_log(
+        IncidentLog(
+            id=str(uuid.uuid4()),
+            robot_id=data.get("robot_id", "ARES-VISION"),
+            message=data.get("message", ""),
+        )
+    )
+    return jsonify({"status": "ok"}), 200
+
+
+@api_bp.route("/robots/<robot_id>/nav_success", methods=["POST"])
+def handle_nav_success(robot_id):
+    """주행 성공 알림 및 관련 로그 생성"""
+    data = request.get_json()
+    RescueAMRService.process_nav_success(
+        robot_id, data["x"], data["y"], data["message"]
+    )
+    return jsonify({"status": "ok"}), 200
+
+
+# =====================================================================
+# 5. 구조대상자 식별 & 이력 (Survivor) API
+# =====================================================================
+@api_bp.route("/survivors", methods=["GET"])
+def get_survivors():
+    survivors = Survivor.query.all()
+    return jsonify(
+        [
+            {
+                "id": s.id,
+                "name": s.name,
+                "sex": s.sex,
+                "phone_number": s.phone_number,
+                "face": s.face,
+            }
+            for s in survivors
+        ]
+    ), 200
+
+
+@api_bp.route("/survivors/identify", methods=["POST"])
+def identify_survivor():
+    data = request.get_json()
+    input_vector = data.get("vector")
+
+    print(
+        f"\n📥 [API] /survivors/identify 수신 (벡터: {len(input_vector) if input_vector else 0}차원)",
+        flush=True,
+    )
+    try:
+        res_body, status_code = SurvivorService.identify_survivor_by_vector(
+            input_vector
+        )
+        return jsonify({"status": "success", **res_body}), status_code
+    except Exception as e:
+        print(f"❌ [API] 매칭 연산 실패: {str(e)}", flush=True)
+        return jsonify({"status": "success", "matched": False, "message": str(e)}), 200
+
+
+@api_bp.route("/survivor-logs", methods=["GET"])
+def get_survivor_logs():
+    limit = request.args.get("limit", 50, type=int)
+    rows = (
+        SurvivorLog.query.order_by(SurvivorLog.detection_time.desc()).limit(limit).all()
+    )
+
+    result = []
+    for row in rows:
+        survivor = Survivor.query.filter_by(id=row.id).first() if row.id else None
+        result.append(
+            {
+                "log_number": row.log_number,
+                "time": row.detection_time.strftime("%H:%M:%S")
+                if row.detection_time
+                else "-",
+                "survivor_id": row.id,
+                "survivor_name": survivor.name if survivor else None,
+                "detected_x": row.detected_x,
+                "detected_y": row.detected_y,
+                "similarity": round(row.similarity * 100, 1)
+                if row.similarity is not None
+                else None,
+                "robot_id": row.robot_id,
+                "img_path": row.img_path,
+            }
+        )
+    return jsonify(result), 200
+
+
+@api_bp.route("/survivor-logs", methods=["POST"])
+def add_survivor_log():
+    data = request.get_json()
+    try:
+        res_body, status_code = SurvivorService.process_survivor_log(data)
+        return jsonify(res_body), status_code
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+
+=== File: database/app/repositories/rescue_amr_repository.py ===
+
+from sqlalchemy.orm import Session
+from app.models.database import db, RescueRobot, IncidentLog
+
+# 터틀봇4 관련 데이터베이스 작업(Querry, Update, Delete)을 담당하는 Repository 클래스
+class RescueAmrRepository:
+    @staticmethod
+    def get_robot_by_id(robot_id: str):
+        return RescueRobot.query.filter_by(id=robot_id).first()
+
+    @staticmethod
+    def save_robot(robot: RescueRobot):
+        db.session.add(robot)
+
+    @staticmethod
+    def create_log(log: IncidentLog):
+        db.session.add(log)
+
+    @staticmethod
+    def get_recent_logs(limit: int = 10):
+        return IncidentLog.query.order_by(IncidentLog.timestamp.desc()).limit(limit).all()
+
+=== File: database/app/repositories/survivor_repository.py ===
+
+from app.models.database import db, Survivor, SurvivorLog
+
+
+class SurvivorRepository:
+    @staticmethod
+    def create_survivor_log(log_obj: SurvivorLog):
+        """생존자 실시간 위치/매칭 로그 저장"""
+        db.session.add(log_obj)
+
+    @staticmethod
+    def get_survivor_by_id(survivor_id: str):
+        """부모 테이블에서 생존자 정보 조회"""
+        return Survivor.query.filter_by(id=survivor_id).first()
+
+    @staticmethod
+    def match_survivor_by_vector(vector_str: str):
+        """pgvector 기반 코사인 유사도 매칭 쿼리 실행"""
+        query_text = db.text("""
+            SELECT id, name, sex, phone_number,
+                   (1 - (face_vector <=> CAST(:vec AS vector))) * 100 AS similarity
+            FROM survivors
+            WHERE face_vector IS NOT NULL
+            ORDER BY face_vector <=> CAST(:vec AS vector)
+            LIMIT 1;
+        """)
+        return db.session.execute(query_text, {"vec": vector_str}).fetchone()
+
+=== File: database/app/repositories/turtlebot4_repository.py ===
+
+from sqlalchemy.orm import Session
+from app.models.database import db, RescueRobot, IncidentLog
+
+# 터틀봇4 관련 데이터베이스 작업(Querry, Update, Delete)을 담당하는 Repository 클래스
+class Turtlebot4Repository:
+    @staticmethod
+    def get_robot_by_id(robot_id: str):
+        return RescueRobot.query.filter_by(id=robot_id).first()
+
+    @staticmethod
+    def save_robot(robot: RescueRobot):
+        db.session.add(robot)
+        db.session.commit()
+
+    @staticmethod
+    def create_log(log: IncidentLog):
+        db.session.add(log)
+        db.session.commit()
+
+    @staticmethod
+    def get_recent_logs(limit: int = 10):
+        return IncidentLog.query.order_by(IncidentLog.timestamp.desc()).limit(limit).all()
+
+=== File: database/app/models/database.py ===
+
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.sql import func
+from app.core import config
+from pgvector.sqlalchemy import Vector
+
+db = SQLAlchemy()
+
+
+def init_db(app):
+    app.config["SQLALCHEMY_DATABASE_URI"] = config.DATABASE_URL
+    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    db.init_app(app)
+
+    with app.app_context():
+        with db.engine.connect() as conn:
+            conn.execute(db.text("CREATE EXTENSION IF NOT EXISTS vector;"))
+            conn.commit()
+        db.create_all()
+
+
+# ==========================================
+# 2. 데이터베이스 스키마 정의 (테이블 구조)
+# ==========================================
+class RescueRobot(db.Model):
+    __tablename__ = "rescue_robots"
+    id = db.Column(db.String, primary_key=True, index=True)
+    status = db.Column(db.String, default="IDLE")  # IDLE, MOVING, SUCCESS, ERROR
+    battery = db.Column(db.Integer, nullable=True)
+    pos_x = db.Column(db.Float, nullable=True)
+    pos_y = db.Column(db.Float, nullable=True)
+
+    explored_area = db.Column(db.Float, nullable=True, default=0.0)
+    total_area = db.Column(db.Float, nullable=True, default=0.0)
+
+class IncidentLog(db.Model):
+    __tablename__ = "incident_logs"
+    id = db.Column(db.String, primary_key=True, index=True)
+    timestamp = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
+    robot_id = db.Column(db.String, nullable=True)
+    message = db.Column(db.String, nullable=False)
+
+# 구조대상자 신상정보 테이블
+class Survivor(db.Model):
+    __tablename__ = "survivors"
+
+    # 실제 소방 규격이나 주민등록번호 확장을 고려해 String(Varchar)으로 셋팅
+    id = db.Column(db.String(50), primary_key=True, index=True)
+    name = db.Column(db.String(50), nullable=False)
+    sex = db.Column(db.String(10), nullable=True)
+    phone_number = db.Column(db.String(20), nullable=True)
+
+    # YOLO/FaceNet 등에서 추출한 256차원 얼굴 임베딩 벡터 저장 공간
+    face_vector = db.Column(Vector(512), nullable=True)
+
+    # Supabase 이미지 URL 저장용
+    face = db.Column(db.String(255), nullable=True)
+
+
+# 고도화된 실시간 구조 로그 테이블
+class SurvivorLog(db.Model):
+    __tablename__ = "survivor_logs"
+
+    log_number = db.Column(db.Integer, primary_key=True, autoincrement=True)
+
+    # survivors 테이블의 id와 연동 (외래키 설정으로 데이터 무결성 확보)
+    id = db.Column(db.String(50), db.ForeignKey("survivors.id"), nullable=True)
+
+    detected_x = db.Column(db.Float, nullable=False)
+    detected_y = db.Column(db.Float, nullable=False)
+    similarity = db.Column(db.Float, nullable=True)  # 얼굴 일치도 (0.0 ~ 1.0)
+    robot_id = db.Column(db.String(50), default="robot1")
+    img_path = db.Column(db.String(255), nullable=True)  # 현장 증거 사진 로컬/서버 경로
+    detection_time = db.Column(db.DateTime(timezone=True), server_default=func.now())
+    
+    
+# 로그인 ID, 비밀번호 테이블
+class LoginUser(db.Model):
+    __tablename__ = "login_data"
+    username      = db.Column(db.String(20), primary_key=True) # ID
+    password_hash = db.Column(db.String(255), nullable=False)  # Hash코드로 변경된 비밀번호
+
+=== File: database/app/models/__init__.py ===
+
+
+=== File: database/app/main.py ===
+
+from flask import Flask
+from flask_cors import CORS
+from app.api.endpoints import api_bp
+from app.models.database import init_db
+
+app = Flask(__name__)
+
+CORS(app)
+init_db(app)
+
+# 블루프린트 등록
+app.register_blueprint(api_bp, url_prefix="/api")
+
+=== File: database/app/__init__.py ===
+
+
+=== File: database/app/services/rescue_amr_service.py ===
+
+import uuid
+from app.models.database import db, RescueRobot, IncidentLog
+from app.repositories.rescue_amr_repository import RescueAmrRepository
+
+# 터틀봇4 관련 비즈니스 로직을 담당하는 Service 클래스
+class RescueAMRService:
+    @staticmethod
+    def process_nav_success(
+        robot_id: str, x: float, y: float, message: str):
+        try:
+            robot = RescueAmrRepository.get_robot_by_id(robot_id)
+            if not robot:
+                robot = RescueRobot(id=robot_id)
+
+            robot.status = "SUCCESS"
+            robot.pos_x = x
+            robot.pos_y = y
+            RescueAmrRepository.save_robot(robot) # 장바구니 담기 1
+
+            new_log = IncidentLog(
+                id=str(uuid.uuid4()),
+                robot_id=robot_id,
+                message=f"<span class='highlight'>{robot_id}</span> {message} (x:{x:.1f}, y:{y:.1f})",
+            )
+            RescueAmrRepository.create_log(new_log) # 장바구니 담기 2
+
+            db.session.commit()
+            
+        except Exception as e:
+            db.session.rollback()
+            raise e
+        
+    @staticmethod
+    def update_pose(
+        robot_id: str, x: float, y: float, status: str = None, battery: int = None
+    ):
+        """로봇 위치·상태 upsert — 없으면 신규 생성, 있으면 갱신"""
+        robot = RescueAmrRepository.get_robot_by_id(robot_id)
+        if not robot:
+            robot = RescueRobot(id=robot_id)
+
+        robot.pos_x = x
+        robot.pos_y = y
+        if status:
+            robot.status = status
+        if battery is not None:
+            robot.battery = battery  # 💡 [추가] 배터리 모델 적용
+
+        RescueAmrRepository.save_robot(robot)
+        db.session.commit()  
+
+    @staticmethod
+    def update_exploration(robot_id: str, explored_area: float, total_area: float):
+        """탐사 완료율 갱신 — 100% 도달 시 SUCCESS로 전환"""
+        robot = RescueAmrRepository.get_robot_by_id(robot_id)
+        if not robot:
+            robot = RescueRobot(id=robot_id)
+
+        robot.explored_area = explored_area  # 💡 [추가] 모델에 값 할당
+        robot.total_area = total_area  # 💡 [추가] 모델에 값 할당
+
+        if total_area > 0:
+            pct = explored_area / total_area
+            robot.status = "SUCCESS" if pct >= 1.0 else "MOVING"
+
+        RescueAmrRepository.save_robot(robot)
+        db.session.commit()  
+
+=== File: database/app/services/turtlebot4_services.py ===
+
+import uuid
+from app.models.database import RescueRobot, IncidentLog
+from app.repositories.turtlebot4_repository import Turtlebot4Repository
+
+# 터틀봇4 관련 비즈니스 로직을 담당하는 Service 클래스
+class Turtlebot4Service:
+    @staticmethod
+    def process_nav_success(
+        robot_id: str, x: float, y: float, message: str
+    ):
+        robot = Turtlebot4Repository.get_robot_by_id(robot_id)
+        if not robot:
+            robot = RescueRobot(id=robot_id)
+
+        robot.status = "SUCCESS"
+        robot.pos_x = x
+        robot.pos_y = y
+        Turtlebot4Repository.save_robot(robot)
+
+        new_log = IncidentLog(
+            id=str(uuid.uuid4()),
+            robot_id=robot_id,
+            message=f"<span class='highlight'>{robot_id}</span> {message} (x:{x:.1f}, y:{y:.1f})",
+        )
+        Turtlebot4Repository.create_log(new_log)
+
+=== File: database/app/services/survivor_service.py ===
+
+import uuid
+from app.models.database import db, SurvivorLog, IncidentLog
+from app.repositories.survivor_repository import SurvivorRepository
+
+
+class SurvivorService:
+    @staticmethod
+    def process_survivor_log(data: dict) -> dict:
+        """구조 로그 수신 및 대시보드 Incident Log 일원화 비즈니스 로직"""
+        try:
+            survivor_id = data.get("id")
+            if survivor_id in ["Unknown", "UNIDENTIFIED", "", None]:
+                survivor_id = None
+
+            # 1. 생존자 실시간 로그 객체 생성 및 Repository 전달
+            new_log = SurvivorLog(
+                id=survivor_id,
+                detected_x=data.get("detected_x"),
+                detected_y=data.get("detected_y"),
+                similarity=data.get("similarity"),
+                robot_id=data.get("robot_id", "robot1"),
+                img_path=data.get("img_path"),
+            )
+            SurvivorRepository.create_survivor_log(new_log)
+
+            # 2. 대시보드 알림 메시지 가공
+            if survivor_id:
+                survivor = SurvivorRepository.get_survivor_by_id(survivor_id)
+                name_str = survivor.name if survivor else survivor_id
+                sim_percent = data.get("similarity", 0) * 100
+                integrated_msg = f"<span class='highlight'>[생존자 식별]</span> {name_str} 님 포착 (유사도: {sim_percent:.1f}%)"
+            else:
+                integrated_msg = f"<span class='highlight-warn'>[미식별 대상 감지]</span> 알 수 없는 구조대상자 포착 (X: {data.get('detected_x')}, Y: {data.get('detected_y')})"
+
+            # 3. 통합 인시던트 로그 생성 및 저장
+            from app.repositories.rescue_amr_repository import (
+                RescueAmrRepository,
+            )  # 순환 참조 방지용 내부 임포트
+
+            integrated_log = IncidentLog(
+                id=str(uuid.uuid4()),
+                robot_id=data.get("robot_id", "robot1"),
+                message=integrated_msg,
+            )
+            RescueAmrRepository.create_log(integrated_log)
+
+            # 4. 최종 커밋
+            db.session.commit()
+            return {"status": "success", "message": "Log saved successfully"}, 201
+
+        except Exception as e:
+            db.session.rollback()
+            raise e  # 발생한 에러는 상위 API 계층으로 던져 처리하게 함
+
+    @staticmethod
+    def identify_survivor_by_vector(input_vector: list) -> dict:
+        try:
+            if not input_vector or len(input_vector) != 512:
+                print("⚠️ [서비스] 수신된 벡터가 없거나 256차원이 아닙니다.", flush=True)
+                return {"error": "512차원의 올바른 벡터가 필요합니다."}, 400
+
+            # 💡 진단 로그: 현재 DB에 face_vector가 채워진 데이터가 몇 개나 있는지 먼저 확인
+            from app.models.database import Survivor
+
+            total_vectors = Survivor.query.filter(
+                Survivor.face_vector.isnot(None)
+            ).count()
+            print(
+                f"📊 [서비스 DB 진단] 현재 로컬 DB 내 face_vector 보유 생존자 수: {total_vectors}명",
+                flush=True,
+            )
+
+            vector_str = f"[{','.join(map(str, input_vector))}]"
+            result = SurvivorRepository.match_survivor_by_vector(vector_str)
+
+            db.session.commit()
+
+            if result:
+                print(f"🎯 [서비스 매칭 결과] 1순위 매칭 후보 탐색 성공!", flush=True)
+                print(f"   - 대상자 ID: {result.id}", flush=True)
+                print(f"   - 성명: {result.name}", flush=True)
+                print(
+                    f"   - 계산된 코사인 유사도: {result.similarity:.2f}%", flush=True
+                )
+
+                # 유사도 기준점 검사
+                if float(result.similarity) < 95.0:
+                    print(
+                        f"⚠️ [서비스 판단] 유사도({result.similarity:.1f}%)가 임계치(95.0%) 미만이므로 미식별 처리합니다.",
+                        flush=True,
+                    )
+                    return {
+                        "matched": False,
+                        "message": f"유사도 미달 (최고 유사도: {result.similarity:.1f}%)",
+                    }, 200
+
+                print(
+                    "✅ [서비스 판단] 신원 확인 완료. 프론트엔드로 매칭 정보 전달",
+                    flush=True,
+                )
+                return {
+                    "matched": True,
+                    "data": {
+                        "id": result.id,
+                        "name": result.name,
+                        "sex": result.sex,
+                        "phone_number": result.phone_number,
+                        "similarity": round(float(result.similarity), 2),
+                    },
+                }, 200
+            else:
+                print(
+                    "❌ [서비스 매칭 결과] DB에서 비교 가능한 대상(face_vector가 Null이 아닌 데이터)을 찾지 못했습니다.",
+                    flush=True,
+                )
+                return {
+                    "matched": False,
+                    "message": "비교할 부모 벡터 데이터가 없습니다.",
+                }, 200
+
+        except Exception as e:
+            db.session.rollback()
+            print(
+                f"🚨 [서비스 예외 발생] 데이터베이스 트랜잭션 오류: {str(e)}",
+                flush=True,
+            )
+            raise e
+
+=== File: database/app/services/mqtt.py ===
+
+import paho.mqtt.client as mqtt
+import json
+
+from app.core import config
+
+class MQTTHandler:
+    def __init__(self):
+        # v2.0 API 규격 적용
+        self.client = mqtt.Client(
+            mqtt.CallbackAPIVersion.VERSION2, "fms_central_server"
+        )
+        self.client.on_connect = self.on_connect
+        self.client.on_disconnect = self.on_disconnect
+
+    def on_connect(self, client, userdata, flags, reason_code, properties):
+        if reason_code == 0:
+            print("✅ [MQTT] Broker 연결 성공! (로봇팔 트리거 대기 및 송출 준비 완료)")
+        else:
+            print(f"❌ [MQTT] Broker 연결 실패 (에러 코드: {reason_code})")
+
+    def on_disconnect(self, client, userdata, flags, reason_code, properties):
+        print("⚠️ [MQTT] Broker 연결이 끊어졌습니다.")
+
+    def start(self):
+        """서버 기동 시 백그라운드에서 MQTT 루프를 시작합니다."""
+        try:
+            self.client.connect(config.MQTT_BROKER_IP, config.MQTT_PORT, 60)
+            self.client.loop_start()
+        except Exception as e:
+            print(f"❌ [MQTT] 브로커에 접속할 수 없습니다: {e}")
+
+    def publish_trigger(self, topic: str, payload: dict):
+        """
+        FastAPI 라우터에서 쉽게 호출할 수 있는 공용 트리거 송출 함수
+        """
+        try:
+            msg_str = json.dumps(payload)
+            self.client.publish(topic, msg_str)
+            print(f"📡 [MQTT PUBLISH] {topic} -> {msg_str}")
+        except Exception as e:
+            print(f"❌ [MQTT PUBLISH ERROR] {e}")
+
+
+# 싱글톤 인스턴스 생성
+mqtt_service = MQTTHandler()
+
+=== File: database/app/services/__init__.py ===
+
+
+=== File: database/docker-compose.yml ===
+
+version: '3.8'
+
+services:
+  # 1. 중앙 데이터베이스 (PostgreSQL + pgvector 내장 이미지로 변경)
+  rescue_db:
+    image: ankane/pgvector:latest
+    container_name: amr_postgres_db
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: rokey1234
+      POSTGRES_DB: rescue_amr_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./.db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d rescue_amr_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - amr_networks
+
+  # 2. 웹 DB GUI 관리 툴 (pgAdmin)
+  db_admin:
+    image: dpage/pgadmin4
+    container_name: amr_db_admin
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: devkibeom@gmail.com
+      PGADMIN_DEFAULT_PASSWORD: admin_pwd
+    ports:
+      - "8080:80"
+    volumes:
+      - pgadmin_config:/var/lib/pgadmin # pgAdmin 서버 연결 설정 영구 보존용 볼륨
+    networks:
+      - amr_networks
+
+  # 3. Flask API 및 관제 UI 통합 서버
+  flask_app:
+    build: .
+    container_name: amr_flask_server
+    restart: always
+    ports:
+      - "8001:8001"
+    environment:
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8001
+      - DB_USER=admin
+      - DB_PASSWORD=rokey1234
+      - DB_HOST=rescue_db
+      - DB_PORT=5432
+      - DB_NAME=rescue_amr_db
+      - FLASK_DEBUG=1
+      - FLASK_ENV=development
+      - SUPABASE_URL=https://ijzmpglzrsmmejpawvsa.supabase.co
+      - SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlqem1wZ2x6cnNtbWVqcGF3dnNhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2NDY5MjEsImV4cCI6MjA5NjIyMjkyMX0.pNalFUDepa9sRC9VDzPqE1-8UZKNVoZG5MyW0sv1_j8
+    volumes:
+      - .:/workspace
+    depends_on:
+      rescue_db:
+        condition: service_healthy
+    networks:
+      - amr_networks
+
+  react_dashboard:
+    image: node:20-alpine
+    container_name: amr_react_dashboard
+    working_dir: /app
+    ports:
+      - "3000:3000" # React 기본 포트 개방
+    volumes:
+      - ../admin_dashboard:/app # React 소스 코드가 있는 폴더 연결
+    # Vite 환경이 도커 볼륨 내부 변화를 실시간 캐치하도록 인라인 실행 명령어 지정
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 3000"
+    depends_on:
+      - flask_app
+    networks:
+      - amr_networks
+
+# pgAdmin 데이터 세션을 안전하게 보관할 독립 볼륨 선언
+volumes:
+  pgadmin_config:
+    driver: local
+
+networks:
+  amr_networks:
+    driver: bridge
+=== File: database/requirements.txt ===
+
+Flask==3.0.2
+Flask-SQLAlchemy==3.1.1
+Flask-CORS==4.0.0
+psycopg2-binary==2.9.9
+pgvector==0.2.5
+supabase>=2.4.0      # 💡 고정 해제: 최신 호환 버전으로 유연하게 탐색
+httpx==0.27.0        # 💡 길잡이 추가: 하위 모듈들이 싸우지 않도록 기준점 제시
+python-dotenv==1.0.1
+requests>=2.31.0     # 💡 충돌 방지를 위해 >= 로 완화
+opencv-python-headless==4.9.0.80
+insightface==0.7.3
+onnxruntime==1.17.1
+numpy<2.0.0
+bcrypt==4.1.2
+=== File: database/survivor_identity/identify_crop_cli.py ===
+
+"""CLI entry point for identifying one crop image."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+
+from survivor_identity.face_identifier import FaceIdentifier
+from survivor_identity.gallery_store import load_config, with_overrides
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Identify one survivor crop image.")
+    parser.add_argument("--image", required=True, help="Path to a head/body/face crop")
+    parser.add_argument("--input-id", default=None)
+    parser.add_argument("--input-kind", default=None, help="head, body, face, or crop")
+    parser.add_argument("--parent-detection-id", default="")
+    parser.add_argument("--config", default=None, help="identity.yaml path")
+    parser.add_argument("--gallery", default=None, help="Central gallery directory")
+    parser.add_argument("--cache", default=None, help="Gallery cache .npz path")
+    parser.add_argument("--model", default=None, help="InsightFace recognition pack")
+    parser.add_argument("--threshold", type=float, default=None)
+    parser.add_argument("--gpu", type=int, default=None, help=">=0 GPU id, <0 CPU")
+    parser.add_argument("--rebuild-cache", action="store_true")
+    parser.add_argument("--output-json", default=None, help="Optional result JSON path")
+    args, _ = parser.parse_known_args()
+    return args
+
+
+def main() -> int:
+    args = parse_args()
+    config = with_overrides(
+        load_config(args.config),
+        gallery_dir=args.gallery,
+        cache_path=args.cache,
+        model_name=args.model,
+        threshold=args.threshold,
+        ctx_id=args.gpu,
+    )
+    identifier = FaceIdentifier(config, rebuild_cache=args.rebuild_cache)
+    result = identifier.identify_path(
+        args.image,
+        input_id=args.input_id,
+        input_kind=args.input_kind,
+        parent_detection_id=args.parent_detection_id,
+    )
+    payload = result.to_dict()
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    print(text)
+    if args.output_json:
+        os.makedirs(os.path.dirname(os.path.abspath(args.output_json)), exist_ok=True)
+        with open(args.output_json, "w", encoding="utf-8") as handle:
+            handle.write(text + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+=== File: database/survivor_identity/face_identifier.py ===
+
+"""High-level identity API for head, body, and face crop images."""
+
+from __future__ import annotations
+
+import os
+import time
+import uuid
+from dataclasses import asdict, dataclass
+from typing import Any
+
+import cv2
+
+from survivor_identity.gallery_store import GalleryStore, IdentityConfig
+from survivor_identity.matcher import CosineMatcher
+
+LANDMARK_MODEL_PACK = "buffalo_l"
+
+
+@dataclass(frozen=True)
+class IdentityInput:
+    image_path: str
+    input_id: str
+    input_kind: str
+    parent_detection_id: str = ""
+
+
+@dataclass(frozen=True)
+class IdentityResult:
+    identity_result_id: str
+    input_id: str
+    input_kind: str
+    parent_detection_id: str
+    person_id: str
+    display_name: str
+    status: str
+    similarity: float
+    threshold: float
+    model_version: str
+    gallery_version: str
+    image_path: str
+    error: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        if self.error is None:
+            payload.pop("error", None)
+        return payload
+
+
+class FaceIdentifier:
+    """Central ArcFace/cosine identity matcher."""
+
+    def __init__(self, config: IdentityConfig, *, rebuild_cache: bool = False) -> None:
+        from survivor_identity.face_identification.models import load_models
+
+        self.config = config
+        self.model_version = (
+            f"arcface:{config.model_name}+landmark:{LANDMARK_MODEL_PACK}"
+        )
+        self.models = load_models(model_name=config.model_name, ctx_id=config.ctx_id)
+        self.gallery = GalleryStore(config, rebuild_cache=rebuild_cache)
+        labels, templates = self.gallery.load()
+        self.matcher = CosineMatcher(
+            labels,
+            templates,
+            threshold=config.threshold,
+            model_version=self.model_version,
+            gallery_version=self.gallery.gallery_version,
+        )
+
+    def identify_path(
+        self,
+        image_path: str,
+        *,
+        input_id: str | None = None,
+        input_kind: str | None = None,
+        parent_detection_id: str = "",
+    ) -> IdentityResult:
+        identity_input = IdentityInput(
+            image_path=os.path.abspath(image_path),
+            input_id=input_id or self._input_id_from_path(image_path),
+            input_kind=input_kind or self._kind_from_path(image_path),
+            parent_detection_id=parent_detection_id,
+        )
+        return self.identify(identity_input)
+
+    def identify(self, identity_input: IdentityInput) -> IdentityResult:
+        from survivor_identity.face_identification.embedding import embed_image
+
+        image = cv2.imread(identity_input.image_path)
+        if image is None:
+            return self._error_result(identity_input, "image_read_failed")
+
+        embedding = embed_image(
+            image,
+            self.models.recognition,
+            self.models.landmark,
+        )
+        if embedding is None:
+            return self._error_result(identity_input, "alignment_failed")
+
+        match = self.matcher.match(embedding)
+        return IdentityResult(
+            identity_result_id=self._result_id(),
+            input_id=identity_input.input_id,
+            input_kind=identity_input.input_kind,
+            parent_detection_id=identity_input.parent_detection_id,
+            person_id=match.person_id,
+            display_name=match.display_name,
+            status=match.status,
+            similarity=match.similarity,
+            threshold=match.threshold,
+            model_version=match.model_version,
+            gallery_version=match.gallery_version,
+            image_path=identity_input.image_path,
+        )
+
+    def _error_result(self, identity_input: IdentityInput, error: str) -> IdentityResult:
+        return IdentityResult(
+            identity_result_id=self._result_id(),
+            input_id=identity_input.input_id,
+            input_kind=identity_input.input_kind,
+            parent_detection_id=identity_input.parent_detection_id,
+            person_id="unknown",
+            display_name="unknown",
+            status="unknown",
+            similarity=0.0,
+            threshold=self.config.threshold,
+            model_version=self.model_version,
+            gallery_version=self.gallery.gallery_version,
+            image_path=identity_input.image_path,
+            error=error,
+        )
+
+    @staticmethod
+    def _result_id() -> str:
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        return f"identity_{timestamp}_{uuid.uuid4().hex[:8]}"
+
+    @staticmethod
+    def _input_id_from_path(image_path: str) -> str:
+        return os.path.splitext(os.path.basename(image_path))[0]
+
+    @staticmethod
+    def _kind_from_path(image_path: str) -> str:
+        stem = os.path.splitext(os.path.basename(image_path))[0].lower()
+        if stem.endswith("_head") or "_head_" in stem:
+            return "head"
+        if stem.endswith("_body") or "_body_" in stem:
+            return "body"
+        if stem.startswith("face_") or "_face" in stem:
+            return "face"
+        return "crop"
+
+=== File: database/survivor_identity/matcher.py ===
+
+"""Cosine matcher shared by all survivor identity entry points."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+
+
+@dataclass(frozen=True)
+class MatchResult:
+    person_id: str
+    display_name: str
+    status: str
+    similarity: float
+    threshold: float
+    model_version: str
+    gallery_version: str
+
+
+class CosineMatcher:
+    """L2-normalized ArcFace embedding matcher."""
+
+    def __init__(
+        self,
+        labels: list[str],
+        templates: np.ndarray,
+        *,
+        threshold: float,
+        model_version: str,
+        gallery_version: str,
+    ) -> None:
+        self.labels = labels
+        self.templates = np.asarray(templates, dtype=np.float32)
+        self.threshold = float(threshold)
+        self.model_version = model_version
+        self.gallery_version = gallery_version
+
+    def match(self, embedding: np.ndarray) -> MatchResult:
+        if len(self.labels) == 0 or self.templates.size == 0:
+            return self._unknown(0.0)
+
+        query = l2_normalize(np.asarray(embedding, dtype=np.float32))
+        similarities = self.templates @ query
+        best_idx = int(np.argmax(similarities))
+        best_sim = float(similarities[best_idx])
+        if best_sim < self.threshold:
+            return self._unknown(best_sim)
+
+        person_id = self.labels[best_idx]
+        return MatchResult(
+            person_id=person_id,
+            display_name=self._display_name(person_id),
+            status="known",
+            similarity=round(best_sim, 4),
+            threshold=self.threshold,
+            model_version=self.model_version,
+            gallery_version=self.gallery_version,
+        )
+
+    def _unknown(self, similarity: float) -> MatchResult:
+        return MatchResult(
+            person_id="unknown",
+            display_name="unknown",
+            status="unknown",
+            similarity=round(float(similarity), 4),
+            threshold=self.threshold,
+            model_version=self.model_version,
+            gallery_version=self.gallery_version,
+        )
+
+    @staticmethod
+    def _display_name(person_id: str) -> str:
+        return person_id.replace("_", " ")
+
+
+def l2_normalize(vector: np.ndarray, eps: float = 1e-10) -> np.ndarray:
+    return vector / (np.linalg.norm(vector) + eps)
+
+=== File: database/survivor_identity/__init__.py ===
+
+"""Central survivor identity matching package."""
+
+from __future__ import annotations
+
+__all__ = []
+
+=== File: database/survivor_identity/gallery_store.py ===
+
+"""Gallery and cache management for central survivor identity matching."""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from typing import Any
+
+import numpy as np
+from ament_index_python.packages import get_package_share_directory
+
+from survivor_identity.face_identification.config import (
+    DEFAULT_CTX_ID,
+    DEFAULT_MODEL_NAME,
+)
+
+
+@dataclass(frozen=True)
+class IdentityConfig:
+    """Central identity runtime settings."""
+
+    gallery_dir: str
+    cache_path: str
+    model_name: str = DEFAULT_MODEL_NAME
+    threshold: float = 0.40
+    ctx_id: int = DEFAULT_CTX_ID
+    input_dir: str = "/tmp/survivor_identity/inbox"
+    output_dir: str = "/tmp/survivor_identity/results"
+
+
+def package_share_dir() -> str:
+    try:
+        return get_package_share_directory("survivor_identity")
+    except Exception:  # noqa: BLE001
+        return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+def default_gallery_dir() -> str:
+    return os.path.join(package_share_dir(), "gallery")
+
+
+def default_cache_path() -> str:
+    return os.path.join(package_share_dir(), "gallery", "gallery_embeddings.npz")
+
+
+def default_config_path() -> str:
+    return os.path.join(package_share_dir(), "config", "identity.yaml")
+
+
+def load_config(config_path: str | None = None) -> IdentityConfig:
+    """Load identity config from YAML, falling back to package defaults."""
+
+    path = config_path or default_config_path()
+    data: dict[str, Any] = {}
+    if os.path.isfile(path):
+        try:
+            import yaml
+        except ImportError as exc:
+            raise RuntimeError("python3-yaml is required to read identity.yaml") from exc
+        with open(path, encoding="utf-8") as handle:
+            loaded = yaml.safe_load(handle) or {}
+        data = loaded.get("survivor_identity", {}).get("ros__parameters", loaded)
+
+    gallery_dir = str(data.get("gallery_dir") or default_gallery_dir())
+    cache_path = str(data.get("cache_path") or os.path.join(gallery_dir, "gallery_embeddings.npz"))
+    return IdentityConfig(
+        gallery_dir=gallery_dir,
+        cache_path=cache_path,
+        model_name=str(data.get("model_name") or DEFAULT_MODEL_NAME),
+        threshold=float(data.get("threshold", 0.40)),
+        ctx_id=int(data.get("ctx_id", DEFAULT_CTX_ID)),
+        input_dir=str(data.get("input_dir") or "/tmp/survivor_identity/inbox"),
+        output_dir=str(data.get("output_dir") or "/tmp/survivor_identity/results"),
+    )
+
+
+def with_overrides(
+    config: IdentityConfig,
+    *,
+    gallery_dir: str | None = None,
+    cache_path: str | None = None,
+    model_name: str | None = None,
+    threshold: float | None = None,
+    ctx_id: int | None = None,
+    input_dir: str | None = None,
+    output_dir: str | None = None,
+) -> IdentityConfig:
+    gallery = os.path.abspath(gallery_dir) if gallery_dir else config.gallery_dir
+    cache = os.path.abspath(cache_path) if cache_path else (
+        os.path.join(gallery, "gallery_embeddings.npz")
+        if gallery_dir and not cache_path else config.cache_path
+    )
+    return IdentityConfig(
+        gallery_dir=gallery,
+        cache_path=cache,
+        model_name=model_name or config.model_name,
+        threshold=config.threshold if threshold is None else float(threshold),
+        ctx_id=config.ctx_id if ctx_id is None else int(ctx_id),
+        input_dir=os.path.abspath(input_dir) if input_dir else config.input_dir,
+        output_dir=os.path.abspath(output_dir) if output_dir else config.output_dir,
+    )
+
+
+class GalleryStore:
+    """Loads or refreshes the single central gallery embedding cache."""
+
+    def __init__(self, config: IdentityConfig, *, rebuild_cache: bool = False) -> None:
+        self.config = config
+        self.rebuild_cache = rebuild_cache
+
+    def ensure_cache(self) -> None:
+        from survivor_identity.face_identification.gallery_builder import (
+            build_gallery_cache,
+            is_cache_stale,
+        )
+
+        if self.rebuild_cache or is_cache_stale(
+            self.config.cache_path,
+            self.config.gallery_dir,
+        ):
+            build_gallery_cache(
+                gallery_dir=self.config.gallery_dir,
+                cache_path=self.config.cache_path,
+                model_name=self.config.model_name,
+                ctx_id=self.config.ctx_id,
+            )
+
+    def load(self) -> tuple[list[str], np.ndarray]:
+        from survivor_identity.face_identification.gallery_builder import load_gallery_cache
+
+        self.ensure_cache()
+        return load_gallery_cache(self.config.cache_path)
+
+    @property
+    def gallery_version(self) -> str:
+        if not os.path.isfile(self.config.cache_path):
+            return "uncached"
+        mtime = int(os.path.getmtime(self.config.cache_path))
+        return f"{os.path.basename(self.config.cache_path)}:{mtime}"
+
+=== File: database/survivor_identity/face_identification/config.py ===
+
+"""face_identification 기본 설정값.
+
+- DEFAULT_MODEL_NAME: ArcFace recognition pack (buffalo_sc, ~15MB MobileFaceNet)
+- DEFAULT_THRESHOLD: cosine similarity 임계값 (0.40, 미만이면 unknown)
+- DEFAULT_GALLERY_DIR / DEFAULT_CACHE_PATH: 등록 인물 이미지 및 NPZ 캐시 경로
+"""
+
+from __future__ import annotations
+
+import os
+
+_PKG_DIR = os.path.dirname(os.path.abspath(__file__))
+_SOURCE_GALLERY_DIR = os.path.abspath(os.path.join(_PKG_DIR, "..", "..", "gallery"))
+
+
+def _default_gallery_dir() -> str:
+    try:
+        from ament_index_python.packages import get_package_share_directory
+
+        return os.path.join(get_package_share_directory("survivor_identity"), "gallery")
+    except Exception:  # noqa: BLE001
+        return _SOURCE_GALLERY_DIR
+
+DEFAULT_MODEL_NAME = "buffalo_sc"
+DEFAULT_THRESHOLD = 0.40
+DEFAULT_CTX_ID = -1  # CPU
+DEFAULT_GALLERY_DIR = _default_gallery_dir()
+DEFAULT_CACHE_PATH = os.path.join(DEFAULT_GALLERY_DIR, "gallery_embeddings.npz")
+
+SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
+=== File: database/survivor_identity/face_identification/recognizer.py ===
+
+"""생존자 1:N 얼굴 식별 (ArcFace + Cosine Similarity).
+
+전체 알고리즘:
+  [입력] head crop 이미지 (perception_node에서 저장된 JPG)
+    ↓
+  [1] 106-point landmark 추론 (2d106det)
+    ↓
+  [2] 106→5 keypoint 축소 + similarity transform 정렬 (112×112)
+    ↓
+  [3] ArcFace embedding 추출 + L2 정규화
+    ↓
+  [4] 1:N 매칭: gallery embedding 행렬과 dot product → cosine similarity
+    ↓
+  [5] argmax + threshold(기본 0.40) → identity 또는 "unknown"
+
+출력: {identity, similarity, matched, crop_id?, image_path?, error?}
+"""
+
+from __future__ import annotations
+
+import os
+from typing import Any
+
+import cv2
+import numpy as np
+
+from .config import (
+    DEFAULT_CACHE_PATH,
+    DEFAULT_CTX_ID,
+    DEFAULT_GALLERY_DIR,
+    DEFAULT_MODEL_NAME,
+    DEFAULT_THRESHOLD,
+)
+from .embedding import embed_image, l2_normalize
+from .gallery_builder import (
+    build_gallery_cache,
+    is_cache_stale,
+    load_gallery_cache,
+)
+from .models import load_models
+
+
+class FaceRecognizer:
+    """pre-cropped head 이미지로 1:N 얼굴 식별을 수행하는 메인 API.
+
+    초기화 시 갤러리 캐시를 로드하고, stale이면 자동 재빌드한다.
+    identify() / identify_image()로 단건 식별, match_embedding()으로
+    임베딩만으로 갤러리 대조가 가능하다.
+    """
+
+    def __init__(
+        self,
+        gallery_dir: str = DEFAULT_GALLERY_DIR,
+        cache_path: str = DEFAULT_CACHE_PATH,
+        model_name: str = DEFAULT_MODEL_NAME,
+        threshold: float = DEFAULT_THRESHOLD,
+        ctx_id: int = DEFAULT_CTX_ID,
+        auto_build_cache: bool = True,
+    ) -> None:
+        self.gallery_dir = os.path.abspath(gallery_dir)
+        self.cache_path = os.path.abspath(cache_path)
+        self.model_name = model_name
+        self.threshold = threshold
+        self.ctx_id = ctx_id
+
+        if auto_build_cache and is_cache_stale(self.cache_path, self.gallery_dir):
+            build_gallery_cache(
+                gallery_dir=self.gallery_dir,
+                cache_path=self.cache_path,
+                model_name=self.model_name,
+                ctx_id=self.ctx_id,
+            )
+
+        self.labels, self.templates = load_gallery_cache(self.cache_path)
+        if len(self.labels) == 0:
+            raise RuntimeError(f"Gallery cache is empty: {self.cache_path}")
+
+        self.models = load_models(model_name=self.model_name, ctx_id=self.ctx_id)
+
+    def identify(self, image_path: str, crop_id: str | None = None) -> dict[str, Any]:
+        """Identify a person from an image file path."""
+        image_bgr = cv2.imread(image_path)
+        if image_bgr is None:
+            return self._result(
+                identity="unknown",
+                similarity=0.0,
+                matched=False,
+                image_path=image_path,
+                crop_id=crop_id,
+                error="image_read_failed",
+            )
+        return self.identify_image(
+            image_bgr,
+            image_path=image_path,
+            crop_id=crop_id,
+        )
+
+    def identify_image(
+        self,
+        image_bgr: np.ndarray,
+        image_path: str | None = None,
+        crop_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Identify a person from a BGR image array."""
+        embedding = embed_image(image_bgr, self.models.recognition, self.models.landmark)
+        if embedding is None:
+            return self._result(
+                identity="unknown",
+                similarity=0.0,
+                matched=False,
+                image_path=image_path,
+                crop_id=crop_id,
+                error="alignment_failed",
+            )
+
+        identity, similarity = self.match_embedding(embedding)
+        matched = identity != "unknown"
+        return self._result(
+            identity=identity,
+            similarity=similarity,
+            matched=matched,
+            image_path=image_path,
+            crop_id=crop_id,
+        )
+
+    def match_embedding(self, embedding: np.ndarray) -> tuple[str, float]:
+        """정규화된 query embedding을 갤러리 전체와 1:N 대조한다.
+
+        알고리즘: L2-normalized 벡터끼리 dot product = cosine similarity.
+        gallery 전체와 내적 후 argmax; 최고 유사도가 threshold 미만이면 "unknown".
+        """
+        query = l2_normalize(np.asarray(embedding, dtype=np.float32))
+        # 1:N cosine similarity: (N×D) @ (D,) → (N,) similarity scores
+        similarities = self.templates @ query
+        best_idx = int(np.argmax(similarities))
+        best_sim = float(similarities[best_idx])
+        if best_sim >= self.threshold:
+            return self.labels[best_idx], best_sim
+        return "unknown", best_sim
+
+    @staticmethod
+    def _result(
+        identity: str,
+        similarity: float,
+        matched: bool,
+        image_path: str | None = None,
+        crop_id: str | None = None,
+        error: str | None = None,
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "identity": identity,
+            "similarity": round(similarity, 4),
+            "matched": matched,
+        }
+        if crop_id is not None:
+            result["crop_id"] = crop_id
+        if image_path is not None:
+            result["image_path"] = image_path
+        if error is not None:
+            result["error"] = error
+        return result
+
+=== File: database/survivor_identity/face_identification/main.py ===
+
+"""face_identification CLI 진입점.
+
+사용 모드:
+  - 단건: --image <head_crop.jpg>
+  - 배치: --metadata-dir <dir> --crops-dir <dir>
+    (crop_kind == "head"인 레코드만 매칭, body crop은 skip)
+
+실행 예:
+  python -m survivor_identity.face_identification.main --image survivor_*_head.jpg
+  python -m survivor_identity.face_identification.main --metadata-dir ~/captures/metadata --crops-dir ~/captures/crops
+"""
+
+from __future__ import annotations
+
+import argparse
+import glob
+import json
+import os
+
+from .config import (
+    DEFAULT_CACHE_PATH,
+    DEFAULT_CTX_ID,
+    DEFAULT_GALLERY_DIR,
+    DEFAULT_MODEL_NAME,
+    DEFAULT_THRESHOLD,
+)
+from .recognizer import FaceRecognizer
+
+
+def load_metadata_records(metadata_dir: str) -> list[dict]:
+    """metadata 디렉터리의 모든 JSON 파일을 로드해 레코드 리스트로 반환한다."""
+    records: list[dict] = []
+    for path in sorted(glob.glob(os.path.join(metadata_dir, "*.json"))):
+        with open(path, encoding="utf-8") as handle:
+            records.append(json.load(handle))
+    return records
+
+
+def resolve_crop_path(record: dict, crops_dir: str | None) -> str | None:
+    """metadata 레코드에서 crop 이미지 경로를 해석한다.
+
+    우선순위: saved_image_path(절대경로) → crop_id + crops_dir 조합.
+    """
+    saved_path = record.get("saved_image_path")
+    if saved_path and os.path.isfile(saved_path):
+        return saved_path
+
+    crop_id = record.get("crop_id")
+    if crops_dir and crop_id:
+        for ext in (".jpg", ".jpeg", ".png"):
+            candidate = os.path.join(crops_dir, f"{crop_id}{ext}")
+            if os.path.isfile(candidate):
+                return candidate
+    return None
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Identify a person from a pre-cropped head image.",
+    )
+    parser.add_argument("--image", help="Path to a single head crop image")
+    parser.add_argument("--metadata-dir", help="Directory of metadata JSON files")
+    parser.add_argument("--crops-dir", help="Directory of crop images for batch mode")
+    parser.add_argument("--gallery", default=DEFAULT_GALLERY_DIR)
+    parser.add_argument("--cache", default=DEFAULT_CACHE_PATH)
+    parser.add_argument("--model", default=DEFAULT_MODEL_NAME)
+    parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
+    parser.add_argument("--gpu", type=int, default=DEFAULT_CTX_ID, help=">=0 GPU id, <0 CPU")
+    parser.add_argument(
+        "--rebuild-cache",
+        action="store_true",
+        help="Force gallery cache rebuild before inference",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    if not args.image and not args.metadata_dir:
+        raise SystemExit("Provide --image or --metadata-dir")
+
+    if args.rebuild_cache:
+        from .gallery_builder import build_gallery_cache
+
+        build_gallery_cache(
+            gallery_dir=args.gallery,
+            cache_path=args.cache,
+            model_name=args.model,
+            ctx_id=args.gpu,
+        )
+
+    recognizer = FaceRecognizer(
+        gallery_dir=args.gallery,
+        cache_path=args.cache,
+        model_name=args.model,
+        threshold=args.threshold,
+        ctx_id=args.gpu,
+        auto_build_cache=not args.rebuild_cache,
+    )
+
+    if args.image:
+        print(json.dumps(recognizer.identify(args.image), ensure_ascii=False, indent=2))
+        return
+
+    results = []
+    for record in load_metadata_records(args.metadata_dir):
+        if record.get("crop_kind") != "head":
+            continue
+        image_path = resolve_crop_path(record, args.crops_dir)
+        if image_path is None:
+            results.append(
+                {
+                    "crop_id": record.get("crop_id"),
+                    "identity": "unknown",
+                    "similarity": 0.0,
+                    "matched": False,
+                    "error": "crop_not_found",
+                }
+            )
+            continue
+
+        result = recognizer.identify(image_path, crop_id=record.get("crop_id"))
+        results.append(result)
+
+    print(json.dumps(results, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()
+
+=== File: database/survivor_identity/face_identification/__init__.py ===
+
+"""생존자 1:N 얼굴 식별 패키지 (InsightFace ArcFace).
+
+head crop → landmark 정렬 → ArcFace embedding → gallery 1:N 매칭.
+주요 API: FaceRecognizer
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .recognizer import FaceRecognizer
+
+__all__ = ["FaceRecognizer"]
+
+
+def __getattr__(name: str):
+    if name == "FaceRecognizer":
+        from .recognizer import FaceRecognizer
+
+        return FaceRecognizer
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+=== File: database/survivor_identity/face_identification/gallery_builder.py ===
+
+"""갤러리(등록 인물) 임베딩 캐시 빌더.
+
+알고리즘:
+  1. gallery/ 디렉터리의 이미지 파일을 스캔 (파일명 stem = identity)
+  2. 각 이미지에 embed_image() 적용 → L2-normalized embedding
+  3. NPZ 파일로 일괄 저장 (identities[], embeddings[N×D])
+
+캐시가 stale(갤러리 이미지가 더 최신)이면 자동 재빌드된다.
+
+입력: gallery/*.jpg (등록 인물 사진)
+출력: gallery_embeddings.npz (identity 목록 + embedding 행렬)
+"""
+
+from __future__ import annotations
+
+import argparse
+import glob
+import json
+import os
+from datetime import datetime, timezone
+
+import cv2
+import numpy as np
+
+from .config import (
+    DEFAULT_CACHE_PATH,
+    DEFAULT_CTX_ID,
+    DEFAULT_GALLERY_DIR,
+    DEFAULT_MODEL_NAME,
+    SUPPORTED_IMAGE_EXTENSIONS,
+)
+from .embedding import embed_image
+from .models import load_models
+
+
+def iter_gallery_images(gallery_dir: str) -> list[tuple[str, str]]:
+    """Return sorted (identity, image_path) pairs from a flat gallery directory."""
+    pairs: list[tuple[str, str]] = []
+    for path in sorted(glob.glob(os.path.join(gallery_dir, "*"))):
+        if not os.path.isfile(path):
+            continue
+        ext = os.path.splitext(path)[1].lower()
+        if ext not in SUPPORTED_IMAGE_EXTENSIONS:
+            continue
+        identity = os.path.splitext(os.path.basename(path))[0]
+        pairs.append((identity, path))
+    return pairs
+
+
+def build_gallery_cache(
+    gallery_dir: str,
+    cache_path: str,
+    model_name: str = DEFAULT_MODEL_NAME,
+    ctx_id: int = DEFAULT_CTX_ID,
+) -> dict:
+    """갤러리 전체 이미지를 임베딩해 NPZ 캐시 파일로 저장한다.
+
+    알고리즘: 각 등록 이미지 → align + ArcFace embed → N×D 행렬로 stack → NPZ 압축 저장.
+    """
+    pairs = iter_gallery_images(gallery_dir)
+    if not pairs:
+        raise RuntimeError(f"No gallery images found in {gallery_dir}")
+
+    models = load_models(model_name=model_name, ctx_id=ctx_id)
+    identities: list[str] = []
+    embeddings: list[np.ndarray] = []
+    source_paths: list[str] = []
+
+    for identity, image_path in pairs:
+        image_bgr = cv2.imread(image_path)
+        if image_bgr is None:
+            raise RuntimeError(f"Failed to read gallery image: {image_path}")
+
+        embedding = embed_image(image_bgr, models.recognition, models.landmark)
+        if embedding is None:
+            raise RuntimeError(f"Failed to align/embed gallery image: {image_path}")
+
+        identities.append(identity)
+        embeddings.append(embedding)
+        source_paths.append(image_path)
+
+    os.makedirs(os.path.dirname(os.path.abspath(cache_path)), exist_ok=True)
+    np.savez_compressed(
+        cache_path,
+        identities=np.array(identities, dtype=object),
+        embeddings=np.stack(embeddings).astype(np.float32),
+        source_paths=np.array(source_paths, dtype=object),
+        model_name=np.array(model_name),
+        gallery_dir=np.array(os.path.abspath(gallery_dir)),
+        created_at=np.array(datetime.now(timezone.utc).isoformat()),
+    )
+
+    return {
+        "cache_path": os.path.abspath(cache_path),
+        "gallery_dir": os.path.abspath(gallery_dir),
+        "model_name": model_name,
+        "identities": identities,
+        "count": len(identities),
+    }
+
+
+def load_gallery_cache(cache_path: str) -> tuple[list[str], np.ndarray]:
+    """Load identities and embeddings from cache."""
+    if not os.path.isfile(cache_path):
+        raise FileNotFoundError(f"Gallery cache not found: {cache_path}")
+
+    data = np.load(cache_path, allow_pickle=True)
+    identities = [str(x) for x in data["identities"].tolist()]
+    embeddings = data["embeddings"].astype(np.float32)
+    return identities, embeddings
+
+
+def is_cache_stale(cache_path: str, gallery_dir: str) -> bool:
+    """갤러리 이미지가 캐시보다 최신이면 True (재빌드 필요)."""
+    if not os.path.isfile(cache_path):
+        return True
+
+    cache_mtime = os.path.getmtime(cache_path)
+    for _, image_path in iter_gallery_images(gallery_dir):
+        if os.path.getmtime(image_path) > cache_mtime:
+            return True
+    return False
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Build gallery embedding cache for face identification.",
+    )
+    parser.add_argument("--gallery", default=DEFAULT_GALLERY_DIR)
+    parser.add_argument("--cache", default=DEFAULT_CACHE_PATH)
+    parser.add_argument("--model", default=DEFAULT_MODEL_NAME)
+    parser.add_argument("--gpu", type=int, default=DEFAULT_CTX_ID, help=">=0 GPU id, <0 CPU")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    summary = build_gallery_cache(
+        gallery_dir=args.gallery,
+        cache_path=args.cache,
+        model_name=args.model,
+        ctx_id=args.gpu,
+    )
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()
+
+=== File: database/survivor_identity/face_identification/embedding.py ===
+
+"""ArcFace 임베딩 추출.
+
+알고리즘 흐름:
+  1. align_face() → 112×112 정렬된 얼굴
+  2. recognition_model.get_feat() → ArcFace 특징 벡터 (D차원)
+  3. L2 정규화 → 단위 벡터 (cosine similarity = dot product)
+
+입력: BGR head crop
+출력: L2-normalized float32 embedding (D,) 또는 None (정렬 실패)
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+from .utils.alignment import align_face
+
+
+def l2_normalize(vector: np.ndarray, eps: float = 1e-10) -> np.ndarray:
+    """벡터를 L2 norm으로 나눠 단위 벡터로 만든다 (cosine similarity 계산용)."""
+    return vector / (np.linalg.norm(vector) + eps)
+
+
+def embed_image(
+    image_bgr: np.ndarray,
+    recognition_model,
+    landmark_model,
+) -> np.ndarray | None:
+    """BGR 이미지에서 L2 정규화된 ArcFace 임베딩을 추출한다.
+
+    알고리즘: landmark 정렬 → ArcFace feature 추출 → L2 normalize.
+    """
+    aligned = align_face(image_bgr, landmark_model)
+    if aligned is None:
+        return None
+    # ArcFace recognition model (MobileFaceNet) forward pass
+    feat = recognition_model.get_feat(aligned).flatten().astype(np.float32)
+    return l2_normalize(feat)
+
+=== File: database/survivor_identity/face_identification/models.py ===
+
+"""InsightFace ONNX 모델 로더.
+
+생존자 1:N 매칭 파이프라인에서 사용하는 두 가지 모델을 로드한다.
+
+- Recognition (buffalo_sc / MobileFaceNet): 정렬된 112×112 얼굴 → ArcFace 임베딩
+- Landmark (buffalo_l / 2d106det): 크롭 이미지 → 106개 2D 랜드마크
+
+입력은 이미 head crop으로 잘려 있으므로 별도 face detector는 사용하지 않는다.
+buffalo_sc에는 landmark 모델이 없어 recognition과 landmark를 서로 다른 pack에서 로드한다.
+"""
+
+from __future__ import annotations
+
+import glob
+import os.path as osp
+from dataclasses import dataclass
+
+from insightface.model_zoo import model_zoo
+from insightface.utils import ensure_available
+
+LANDMARK_MODEL_PACK = "buffalo_l"
+
+
+@dataclass
+class InsightFaceModels:
+    """InsightFace recognition·landmark ONNX 모델을 묶어 보관하는 컨테이너.
+
+    Attributes:
+        recognition: ArcFace 임베딩 추출 모델 (taskname='recognition').
+        landmark: 106-point 2D 랜드마크 추론 모델 (taskname='landmark_2d_106').
+        model_name: recognition pack 이름 (예: 'buffalo_sc').
+    """
+
+    recognition: object
+    landmark: object
+    model_name: str
+
+
+def _load_task_model(model_dir: str, taskname: str):
+    """모델 디렉터리에서 taskname에 해당하는 ONNX 파일을 탐색해 로드한다."""
+    for onnx_file in sorted(glob.glob(osp.join(model_dir, "*.onnx"))):
+        model = model_zoo.get_model(onnx_file)
+        if model is not None and model.taskname == taskname:
+            return model
+    return None
+
+
+def load_models(model_name: str = "buffalo_sc", ctx_id: int = -1) -> InsightFaceModels:
+    """Load ArcFace recognition and 106-point landmark models.
+
+    Recognition comes from ``model_name`` (default: buffalo_sc / MobileFaceNet).
+    Landmark always comes from ``buffalo_l``'s ``2d106det`` model because
+    ``buffalo_sc`` does not ship a landmark model.
+    """
+    rec_dir = ensure_available("models", model_name, root="~/.insightface")
+    landmark_dir = ensure_available("models", LANDMARK_MODEL_PACK, root="~/.insightface")
+
+    recognition = _load_task_model(rec_dir, "recognition")
+    landmark = _load_task_model(landmark_dir, "landmark_2d_106")
+
+    if recognition is None or landmark is None:
+        raise RuntimeError(
+            f"Could not load recognition/landmark models "
+            f"(recognition pack='{model_name}', landmark pack='{LANDMARK_MODEL_PACK}'). "
+            "Install insightface and ensure model packs downloaded successfully."
+        )
+
+    recognition.prepare(ctx_id)
+    landmark.prepare(ctx_id)
+    return InsightFaceModels(
+        recognition=recognition,
+        landmark=landmark,
+        model_name=model_name,
+    )
+
+=== File: database/survivor_identity/face_identification/utils/__init__.py ===
+
+"""Utility helpers for face identification."""
+
+=== File: database/survivor_identity/face_identification/utils/alignment.py ===
+
+"""랜드마크 기반 얼굴 정렬 (Face Alignment).
+
+알고리즘 흐름:
+  1. head crop 이미지 전체를 loose bbox로 설정 (별도 face detector 없음)
+  2. InsightFace 2d106det → 106개 2D 랜드마크 추론
+  3. 106점 → 5점 축소 (양쪽 눈·코·입꼬리) — ArcFace 정렬 표준 keypoint
+  4. similarity transform으로 112×112 canonical face crop 생성
+
+입력: BGR head crop (H×W×3)
+출력: 112×112 정렬된 얼굴 이미지 (정렬 실패 시 None)
+"""
+
+from __future__ import annotations
+
+import numpy as np
+from insightface.app.common import Face
+from insightface.utils import face_align
+
+
+def landmark_106_to_5(lmk106: np.ndarray) -> np.ndarray:
+    """106-point 랜드마크를 ArcFace 정렬용 5-point keypoint로 축소한다.
+
+    알고리즘: InsightFace 106점 표준 인덱스에서 눈 윤곽 점군의 centroid를
+    좌/우 눈 중심으로 사용하고, 코·입꼬리는 단일 고정 인덱스를 그대로 취한다.
+    """
+    lmk5 = np.zeros((5, 2), dtype=np.float32)
+    # 좌측 눈: 인덱스 33~41 점군의 평균
+    lmk5[0] = np.mean(lmk106[33:42], axis=0)
+    # 우측 눈: 인덱스 87~95 점군의 평균
+    lmk5[1] = np.mean(lmk106[87:96], axis=0)
+    # 코 끝, 좌/우 입꼬리
+    lmk5[2] = lmk106[86]
+    lmk5[3] = lmk106[52]
+    lmk5[4] = lmk106[61]
+    return lmk5
+
+
+def full_image_bbox(image_bgr: np.ndarray, margin_ratio: float = 0.02) -> np.ndarray:
+    """head crop 전체를 face bbox로 사용한다 (2% margin으로 경계 여유 확보).
+
+    입력이 이미 head crop이므로 detector 없이 전체 이미지를 얼굴 영역으로 간주한다.
+    """
+    height, width = image_bgr.shape[:2]
+    mx = int(width * margin_ratio)
+    my = int(height * margin_ratio)
+    return np.array(
+        [mx, my, max(mx + 1, width - mx), max(my + 1, height - my)],
+        dtype=np.float32,
+    )
+
+
+def align_face(
+    image_bgr: np.ndarray,
+    landmark_model,
+    image_size: int = 112,
+) -> np.ndarray | None:
+    """랜드마크 기반 similarity transform으로 얼굴을 정렬한다.
+
+    알고리즘:
+      1) 2d106det 모델로 106개 랜드마크 추론
+      2) 106→5 keypoint 축소
+      3) face_align.norm_crop()으로 5점을 ArcFace 표준 위치에 맞춰 warp
+    """
+    if image_bgr is None or image_bgr.size == 0:
+        return None
+
+    face = Face(bbox=full_image_bbox(image_bgr))
+    # 106-point landmark 추론
+    lmk106 = landmark_model.get(image_bgr, face)
+    if lmk106 is None or len(lmk106) < 62:
+        task_name = getattr(landmark_model, "taskname", "landmark_2d_106")
+        stored = getattr(face, task_name, None)
+        if stored is None:
+            return None
+        lmk106 = stored
+
+    kps5 = landmark_106_to_5(np.asarray(lmk106, dtype=np.float32))
+    # similarity transform → 112×112 canonical face
+    return face_align.norm_crop(image_bgr, kps5, image_size=image_size)
+
+=== File: database/survivor_identity/identity_worker.py ===
+
+"""Folder/mock-queue worker for central survivor identity requests."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import time
+from typing import Any
+
+from survivor_identity.face_identifier import FaceIdentifier
+from survivor_identity.gallery_store import load_config, with_overrides
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Scan a folder/mock queue and write identity result JSON files.",
+    )
+    parser.add_argument("--input-dir", default=None)
+    parser.add_argument("--output-dir", default=None)
+    parser.add_argument("--config", default=None)
+    parser.add_argument("--gallery", default=None)
+    parser.add_argument("--cache", default=None)
+    parser.add_argument("--model", default=None)
+    parser.add_argument("--threshold", type=float, default=None)
+    parser.add_argument("--gpu", type=int, default=None)
+    parser.add_argument("--rebuild-cache", action="store_true")
+    parser.add_argument("--watch", action="store_true")
+    parser.add_argument("--poll-period", type=float, default=2.0)
+    args, _ = parser.parse_known_args()
+    return args
+
+
+def main() -> int:
+    args = parse_args()
+    config = with_overrides(
+        load_config(args.config),
+        gallery_dir=args.gallery,
+        cache_path=args.cache,
+        model_name=args.model,
+        threshold=args.threshold,
+        ctx_id=args.gpu,
+        input_dir=args.input_dir,
+        output_dir=args.output_dir,
+    )
+    os.makedirs(config.input_dir, exist_ok=True)
+    os.makedirs(config.output_dir, exist_ok=True)
+
+    print(
+        f"identity_worker input_dir='{config.input_dir}' "
+        f"output_dir='{config.output_dir}' threshold={config.threshold}"
+    )
+
+    identifier: FaceIdentifier | None = None
+    while True:
+        requests = iter_requests(config.input_dir)
+        if requests and identifier is None:
+            identifier = FaceIdentifier(config, rebuild_cache=args.rebuild_cache)
+        processed = (
+            scan_requests(identifier, requests, config.output_dir)
+            if identifier is not None else 0
+        )
+        print(f"processed {processed} identity request(s)")
+        if not args.watch:
+            break
+        time.sleep(max(0.1, float(args.poll_period)))
+    return 0
+
+
+def scan_once(identifier: FaceIdentifier, input_dir: str, output_dir: str) -> int:
+    return scan_requests(identifier, iter_requests(input_dir), output_dir)
+
+
+def scan_requests(identifier: FaceIdentifier, requests: list[str], output_dir: str) -> int:
+    count = 0
+    for path in requests:
+        request = load_request(path)
+        if request is None:
+            continue
+        output_path = result_path(output_dir, request["input_id"])
+        if os.path.exists(output_path):
+            continue
+        result = identifier.identify_path(
+            request["image_path"],
+            input_id=request["input_id"],
+            input_kind=request["input_kind"],
+            parent_detection_id=request["parent_detection_id"],
+        )
+        write_json(output_path, result.to_dict())
+        print(json.dumps(result.to_dict(), ensure_ascii=False))
+        count += 1
+    return count
+
+
+def iter_requests(input_dir: str) -> list[str]:
+    paths = []
+    for name in sorted(os.listdir(input_dir)):
+        path = os.path.join(input_dir, name)
+        if not os.path.isfile(path):
+            continue
+        ext = os.path.splitext(name)[1].lower()
+        if ext == ".json" or ext in IMAGE_EXTENSIONS:
+            paths.append(path)
+    return paths
+
+
+def load_request(path: str) -> dict[str, str] | None:
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".json":
+        with open(path, encoding="utf-8") as handle:
+            metadata = json.load(handle)
+        image_path = resolve_image_path(metadata)
+        if not image_path:
+            return None
+        input_id = str(
+            metadata.get("crop_id")
+            or metadata.get("detection_id")
+            or os.path.splitext(os.path.basename(image_path))[0]
+        )
+        return {
+            "image_path": image_path,
+            "input_id": input_id,
+            "input_kind": str(metadata.get("crop_kind") or infer_kind(image_path)),
+            "parent_detection_id": str(metadata.get("parent_detection_id") or ""),
+        }
+
+    if ext in IMAGE_EXTENSIONS:
+        return {
+            "image_path": os.path.abspath(path),
+            "input_id": os.path.splitext(os.path.basename(path))[0],
+            "input_kind": infer_kind(path),
+            "parent_detection_id": "",
+        }
+    return None
+
+
+def resolve_image_path(metadata: dict[str, Any]) -> str | None:
+    saved = metadata.get("saved_image_path")
+    if saved and os.path.isfile(str(saved)):
+        return os.path.abspath(str(saved))
+
+    image_uri = str(metadata.get("image_uri") or "")
+    if image_uri.startswith("file://"):
+        candidate = image_uri[len("file://"):]
+        if os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    return None
+
+
+def infer_kind(image_path: str) -> str:
+    stem = os.path.splitext(os.path.basename(image_path))[0].lower()
+    if stem.endswith("_head") or "_head_" in stem:
+        return "head"
+    if stem.endswith("_body") or "_body_" in stem:
+        return "body"
+    if stem.startswith("face_") or "_face" in stem:
+        return "face"
+    return "crop"
+
+
+def result_path(output_dir: str, input_id: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in input_id)
+    return os.path.join(output_dir, f"{safe}_identity.json")
+
+
+def write_json(path: str, payload: dict[str, Any]) -> None:
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+=== File: database/survivor_identity/crop_face_bridge.py ===
+
+#!/usr/bin/env python3
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from sensor_msgs.msg import CompressedImage
+from cv_bridge import CvBridge
+import cv2
+import requests
+import numpy as np
+
+# 패키지에서 "벡터 추출 모델"만 끌어옵니다.
+from survivor_identity.face_identification.models import load_models
+from survivor_identity.face_identification.embedding import embed_image
+
+
+class BackendAIVisionBridge(Node):
+    def __init__(self):
+        super().__init__("backend_ai_vision_bridge")
+        self.bridge = CvBridge()
+
+        # 1. 팀원 AI 모델 메모리 로드 (GPU가 있으면 ctx_id=0, 없으면 -1)
+        self.get_logger().info("🧠 InsightFace(buffalo_l) 모델 로딩 중...")
+        self.models = load_models(model_name="buffalo_l", ctx_id=-1)
+
+        # 2. AMR이 보내는 "크롭된 얼굴 이미지" 토픽 구독 (화재 현장 네트워크 고려 BEST_EFFORT)
+        qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=5,
+        )
+        # 예: 로봇이 얼굴만 잘라서 압축해서 보내는 토픽
+        self.create_subscription(
+            CompressedImage,
+            "/robot1/survivor/face_crop/compressed",
+            self.crop_callback,
+            qos_profile,
+        )
+
+        self.flask_url = "http://127.0.0.1:8001/api/survivors/identify"
+        self.get_logger().info(
+            "📡 [백엔드 AI 브릿지] 로봇의 크롭 이미지 수신 및 벡터 추출 대기 중..."
+        )
+
+    def crop_callback(self, msg: CompressedImage):
+        try:
+            # 1. ROS2 압축 이미지 -> OpenCV 변환
+            cv_image = self.bridge.compressed_imgmsg_to_cv2(
+                msg, desired_encoding="bgr8"
+            )
+
+            # 2. 팀원 로직 활용: 이미지에서 특징 벡터 추출 (Embedding)
+            embedding = embed_image(
+                cv_image, self.models.recognition, self.models.landmark
+            )
+
+            if embedding is None:
+                self.get_logger().warn(
+                    "⚠️ 얼굴 특징점을 찾을 수 없습니다. (화질 불량 또는 얼굴 아님)"
+                )
+                return
+
+            # 512차원 numpy 배열을 일반 Python List로 변환
+            face_vector = embedding.tolist()
+
+            # 3. 기범님의 완성된 Flask 백엔드로 POST 요청 (pgvector 매칭)
+            res = requests.post(
+                self.flask_url, json={"vector": face_vector}, timeout=2.0
+            )
+            data = res.json()
+
+            if res.status_code == 200 and data.get("matched"):
+                user = data["data"]
+                self.get_logger().info(
+                    f"🎯 [DB 매칭 완료] {user['name']} 님 식별! (유사도: {user['similarity']}%)"
+                )
+            else:
+                self.get_logger().info("❓ [미식별] 등록되지 않은 구조대상자입니다.")
+
+        except Exception as e:
+            self.get_logger().error(f"❌ AI 연산 또는 통신 에러: {e}")
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = BackendAIVisionBridge()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()
+
+=== File: database/init_and_run.sh ===
+
+#!/bin/bash
+
+echo "🚒 [ARES] 인프라 구축 및 자동 가동 스크립트를 시작합니다..."
+
+# 1. 도커 실행 권한 자동 체크 및 부여
+if ! groups $USER | grep &>/dev/null "\bdocker\b"; then
+    echo "🔑 도커 실행 권한이 없어 자동으로 사용자를 docker 그룹에 추가합니다..."
+    sudo groupadd docker 2>/dev/null
+    sudo usermod -aG docker $USER
+    echo "⚠️ 권한 적용을 위해 새로운 셸 세션을 엽니다."
+fi
+
+# 2. 기존에 꼬여있을 수 있는 구버전 .db_data 권한 및 파일 정리
+if [ -d ".db_data" ]; then
+    echo "🧹 이전 계정 정보가 남아있을 수 있어 기존 .db_data를 안전하게 정리합니다..."
+    sudo rm -rf .db_data
+fi
+
+# 3. 도커 컴포즈 버전 자동 감지 및 알맞은 명령어로 가동
+if docker compose version &>/dev/null; then
+    echo "🐳 최신 도커 컴포즈(V2)를 감지했습니다. 인프라를 가동합니다."
+    docker compose up --build -d
+elif docker-compose version &>/dev/null; then
+    echo "🐳 구버전 도커 컴포즈(V1)를 감지했습니다. 하이픈(-) 명령어로 우회하여 가동합니다."
+    docker-compose up --build -d
+else
+    echo "❌ 도커 컴포즈가 설치되어 있지 않습니다. 도커 설치를 먼저 확인해 주세요."
+    exit 1
+fi
+
+echo "✅ [ARES] 모든 인프라(PostgreSQL, pgAdmin, Flask)가 정상적으로 백그라운드에서 가동되었습니다!"
+echo "🌐 웹 브라우저에서 http://localhost:3000 로 접속하세요."
+
+=== File: database/run.py ===
+
+from app.main import app
+from app.models.database import db
+from app.core import config
+
+if __name__ == "__main__":
+    with app.app_context():
+        print(
+            "🧱 [ARES 백엔드] PostgreSQL 데이터베이스 테이블 무결성 검증 및 생성 중..."
+        )
+        db.create_all()
+        print("✅ [ARES 백엔드] 데이터베이스 테이블 생성 및 연동 완료!")
+
+    app.run(host=config.SERVER_HOST, port=config.SERVER_PORT, debug=True)

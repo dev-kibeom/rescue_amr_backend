@@ -3,6 +3,7 @@ setup.cfg
 setup.py
 ares_bridges/__init__.py
 ares_bridges/ai_vision_bridge.py
+ares_bridges/ares_dummy_teleop.py
 ares_bridges/robot_status_bridge.py
 ares_bridges/webrtc_bridge.py
 ares_bridges.egg-info/PKG-INFO

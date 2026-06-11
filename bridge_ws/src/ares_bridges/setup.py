@@ -30,6 +30,7 @@ setup(
             "webrtc_bridge = ares_bridges.webrtc_bridge:main",
             "robot_status_bridge = ares_bridges.robot_status_bridge:main",
             "ai_vision_bridge = ares_bridges.ai_vision_bridge:main",
+            "ares_dummy_teleop = ares_bridges.ares_dummy_teleop:main",
         ],
     },
 )
