@@ -703,3 +703,178 @@ td { padding: 10px 1.2rem; font-size: 13px; color: var(--text2); vertical-align:
   opacity: 0.75;
   padding-left: 1.2rem;
 }
+
+/* ── AresLogin 전용 순수 CSS 스타일 구문 (AresPages.css 맨 아래에 교체 추가) ── */
+
+.ares-wrap {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-left: 14vw;
+  background-image: url("../assets/login-bg.jpg"); /* 💡 CSS 폴더 기준으로 assets 이미지 경로 매핑 최적화 */
+  background-size: cover;
+  background-position: center;
+  position: relative;
+  overflow: hidden;
+  font-family: 'Noto Sans KR', sans-serif;
+  box-sizing: border-box;
+}
+
+.ares-wrap::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.38);
+}
+
+.ares-card {
+  position: relative;
+  z-index: 10;
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 3rem 2.6rem 2.4rem;
+  width: 390px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+}
+
+.ares-logo-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 1.9rem;
+}
+
+.ares-logo-svg {
+  width: 86px;
+  height: 86px;
+  margin-bottom: 0.75rem;
+}
+
+.ares-logo-title {
+  font-size: 34px;
+  font-weight: 800;
+  color: #cc2222;
+  letter-spacing: 5px;
+  margin-bottom: 4px;
+}
+
+.ares-logo-sub {
+  font-size: 13px;
+  color: #666;
+  font-weight: 500;
+}
+
+.ares-form-group {
+  margin-bottom: 1.05rem;
+}
+
+.ares-label {
+  font-size: 13px;
+  color: #444;
+  font-weight: 600;
+  display: block;
+  margin-bottom: 7px;
+}
+
+.ares-input-wrap {
+  position: relative;
+}
+
+.ares-lock-icon {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 17px;
+  height: 17px;
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.ares-input {
+  width: 100%;
+  height: 50px;
+  padding: 0 38px 0 14px;
+  background: #f5f5f5;
+  border: 1.5px solid #e0e0e0;
+  border-radius: 9px;
+  font-size: 14px;
+  font-family: 'Noto Sans KR', sans-serif;
+  color: #222;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  box-sizing: border-box;
+}
+
+.ares-input::placeholder {
+  color: #bbb;
+}
+
+.ares-input:focus {
+  outline: none;
+  border-color: #cc2222;
+  box-shadow: 0 0 0 3px rgba(204, 34, 34, 0.1);
+  background: #fff;
+}
+
+.ares-btn {
+  width: 100%;
+  height: 52px;
+  background: #cc2222;
+  color: #fff;
+  border: none;
+  border-radius: 9px;
+  font-size: 16px;
+  font-weight: 700;
+  font-family: 'Noto Sans KR', sans-serif;
+  letter-spacing: 3px;
+  cursor: pointer;
+  margin-top: 0.6rem;
+  transition: background 0.15s, transform 0.1s;
+  box-shadow: 0 4px 16px rgba(204, 34, 34, 0.45);
+}
+
+.ares-btn:hover {
+  background: #a81c1c;
+  transform: translateY(-1px);
+}
+
+.ares-btn:active {
+  transform: translateY(0);
+}
+
+.ares-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+  transform: none;
+}
+
+.ares-error {
+  margin-top: 10px;
+  background: #fff5f5;
+  border: 1px solid rgba(204, 34, 34, 0.25);
+  border-radius: 7px;
+  padding: 9px 13px;
+  font-size: 12px;
+  color: #cc2222;
+}
+
+.ares-footer {
+  margin-top: 1.9rem;
+  text-align: center;
+  font-size: 11px;
+  color: #bbb;
+}
+
+@media (max-width: 720px) {
+  .ares-wrap {
+    justify-content: center;
+    padding: 20px;
+  }
+
+  .ares-card {
+    width: min(390px, 100%);
+    padding: 2.5rem 2rem 2.2rem;
+  }
+}

@@ -1,0 +1,759 @@
+=========================================
+ PROJECT DIRECTORY TREE
+=========================================
+bridge_ws/
+└── src
+    └── ares_bridges
+        ├── ares_bridges
+        │   ├── ai_vision_bridge.py
+        │   ├── __init__.py
+        │   ├── robot_status_bridge.py
+        │   └── webrtc_bridge.py
+        ├── launch
+        │   └── ares_bridge.launch.py
+        ├── package.xml
+        ├── resource
+        │   └── ares_bridges
+        ├── setup.cfg
+        ├── setup.py
+        └── test
+            ├── test_copyright.py
+            ├── test_flake8.py
+            └── test_pep257.py
+
+6 directories, 12 files
+
+
+
+
+=== File: bridge_ws/src/ares_bridges/test/test_copyright.py ===
+
+# Copyright 2015 Open Source Robotics Foundation, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from ament_copyright.main import main
+import pytest
+
+
+# Remove the `skip` decorator once the source file(s) have a copyright header
+@pytest.mark.skip(reason='No copyright header has been placed in the generated source file.')
+@pytest.mark.copyright
+@pytest.mark.linter
+def test_copyright():
+    rc = main(argv=['.', 'test'])
+    assert rc == 0, 'Found errors'
+
+=== File: bridge_ws/src/ares_bridges/test/test_flake8.py ===
+
+# Copyright 2017 Open Source Robotics Foundation, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from ament_flake8.main import main_with_errors
+import pytest
+
+
+@pytest.mark.flake8
+@pytest.mark.linter
+def test_flake8():
+    rc, errors = main_with_errors(argv=[])
+    assert rc == 0, \
+        'Found %d code style errors / warnings:\n' % len(errors) + \
+        '\n'.join(errors)
+
+=== File: bridge_ws/src/ares_bridges/test/test_pep257.py ===
+
+# Copyright 2015 Open Source Robotics Foundation, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from ament_pep257.main import main
+import pytest
+
+
+@pytest.mark.linter
+@pytest.mark.pep257
+def test_pep257():
+    rc = main(argv=['.', 'test'])
+    assert rc == 0, 'Found code style errors / warnings'
+
+=== File: bridge_ws/src/ares_bridges/setup.py ===
+
+import os
+from glob import glob
+from setuptools import find_packages, setup
+
+package_name = "ares_bridges"
+
+setup(
+    name=package_name,
+    version="0.0.0",
+    packages=find_packages(exclude=["test"]),
+    data_files=[
+        ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
+        ("share/" + package_name, ["package.xml"]),
+        # 💡 런치 파일이 빌드 시 포함되도록 추가
+        (
+            os.path.join("share", package_name, "launch"),
+            glob(os.path.join("launch", "*launch.[pxy][yma]*")),
+        ),
+    ],
+    install_requires=["setuptools"],
+    zip_safe=True,
+    maintainer="kibeom",
+    maintainer_email="devkibeom@gmail.com",
+    description="ARES Project: Standalone Communication Bridges",
+    license="TODO: License declaration",
+    tests_require=["pytest"],
+    entry_points={
+        "console_scripts": [
+            # 💡 3개의 브릿지 노드를 터미널 명령어(executable)로 등록
+            "webrtc_bridge = ares_bridges.webrtc_bridge:main",
+            "robot_status_bridge = ares_bridges.robot_status_bridge:main",
+            "ai_vision_bridge = ares_bridges.ai_vision_bridge:main",
+        ],
+    },
+)
+
+=== File: bridge_ws/src/ares_bridges/launch/ares_bridge.launch.py ===
+
+from launch import LaunchDescription
+from launch_ros.actions import Node
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
+
+def generate_launch_description():
+    # 실행 시 로봇 ID를 동적으로 받을 수 있도록 설정 (기본값: robot5)
+    robot_id = LaunchConfiguration('robot_id', default='robot5')
+
+    return LaunchDescription([
+        DeclareLaunchArgument(
+            'robot_id',
+            default_value='robot5',
+            description='ID of the robot to bridge'
+        ),
+        
+        # 1. WebRTC 영상/데이터 스트리밍 브릿지
+        Node(
+            package='ares_bridges',
+            executable='webrtc_bridge',
+            name='webrtc_bridge',
+            output='screen',
+            parameters=[{
+                'port': 8002,
+                'topic': ['/', robot_id, '/survivor/annotated'], # 압축 토픽이 복구되면 /compressed 추가
+                'robot': robot_id
+            }]
+        ),
+
+        # 2. 로봇 상태(배터리, 위치) 백엔드 동기화 브릿지
+        Node(
+            package='ares_bridges',
+            executable='robot_status_bridge',
+            name='robot_status_bridge',
+            output='screen',
+            parameters=[{
+                'robot_id': robot_id
+            }]
+        ),
+
+        # 3. AI 얼굴 크롭 이미지 백엔드 매칭 브릿지
+        Node(
+            package='ares_bridges',
+            executable='ai_vision_bridge',
+            name='ai_vision_bridge',
+            output='screen',
+            parameters=[{
+                'robot_id': robot_id
+            }]
+        ),
+    ])
+
+=== File: bridge_ws/src/ares_bridges/ares_bridges/webrtc_bridge.py ===
+
+#!/usr/bin/env python3
+import numpy as np
+import asyncio, json, cv2, sys, threading
+from fractions import Fraction
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+
+from nav_msgs.msg import Path
+from nav_msgs.msg import OccupancyGrid
+from sensor_msgs.msg import Image, CompressedImage, BatteryState
+
+from cv_bridge import CvBridge
+from aiohttp import web
+from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription
+from av import VideoFrame
+
+latest_frame = None
+frame_lock = threading.Lock()
+pcs = set()
+active_datachannels = set()
+_ROBOT_ID = "robot1"
+main_loop = None
+
+
+class RosImageTrack(MediaStreamTrack):
+    kind = "video"
+
+    def __init__(self):
+        super().__init__()
+        self._start_time = None
+        self._pts = 0
+        self._pts_step = max(1, int(90000 * (1.0 / 15.0)))
+
+    async def recv(self):
+        global latest_frame
+        loop = asyncio.get_event_loop()
+        if self._start_time is None:
+            self._start_time = loop.time()
+
+        self._pts += self._pts_step
+        await asyncio.sleep(
+            max(0, (self._start_time + (self._pts / 90000)) - loop.time())
+        )
+
+        with frame_lock:
+            img = (
+                latest_frame
+                if latest_frame is not None
+                else np.zeros((480, 640, 3), dtype=np.uint8)
+            )
+
+        frame = VideoFrame.from_ndarray(
+            cv2.cvtColor(img, cv2.COLOR_BGR2RGB), format="rgb24"
+        )
+        frame.pts, frame.time_base = self._pts, Fraction(1, 90000)
+        return frame
+
+
+class WebrtcBridge(Node):
+    def __init__(self):
+        super().__init__("webrtc_bridge")
+        self.bridge = CvBridge()
+        self.declare_parameter("port", 8002)
+        self.declare_parameter("topic", "/robot5/survivor/annotated")
+        self.declare_parameter("robot", "robot5")
+
+        self.port = self.get_parameter("port").value
+        self.topic_name = self.get_parameter("topic").value
+        self.robot_id = self.get_parameter("robot").value
+
+        qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
+        self.create_subscription(
+            Image, self.topic_name, self.image_callback, qos
+        )
+        self.create_subscription(
+            BatteryState, f"/{self.robot_id}/battery_state", self.battery_callback, 10
+        )
+
+        self.create_subscription(
+            Path, f"/{self.robot_id}/coverage/path", self.path_callback, 10
+        )
+
+        self.create_subscription(
+            OccupancyGrid,
+            f"/{self.robot_id}/camera_coverage",
+            self.coverage_callback,
+            10,
+        )
+
+        self.get_logger().info(
+            f"👀 [WebRTC 브릿지] 가동2! 포트: {self.port}, 토픽: {self.topic_name}"
+        )
+    
+    def coverage_callback(self, msg: OccupancyGrid):
+        if not active_datachannels:
+            return
+
+        width = msg.info.width
+        height = msg.info.height
+        res = msg.info.resolution
+        origin_x = msg.info.origin.position.x
+        origin_y = msg.info.origin.position.y
+
+        data = np.array(msg.data, dtype=np.int8).reshape((height, width))
+
+        # 💡 값이 100(카메라가 훑고 지나간 영역)인 인덱스만 싹 골라내기
+        y_indices, x_indices = np.where(data == 100)
+
+        # 데이터 다이어트를 위해 최대 200개까지만 샘플링하여 대역폭 보호
+        step = max(1, len(x_indices) // 200)
+        sampled_x = x_indices[::step]
+        sampled_y = y_indices[::step]
+
+        # 인덱스 좌표 -> 실제 ROS2 평면 미터(m) 좌표로 역연산 변환
+        coverage_points = []
+        for sx, sy in zip(sampled_x, sampled_y):
+            real_x = origin_x + (sx * res)
+            real_y = origin_y + (sy * res)
+            coverage_points.append({"x": float(real_x), "y": float(real_y)})
+
+        payload = json.dumps({"type": "camera_coverage", "points": coverage_points})
+
+        global main_loop
+        if main_loop and not main_loop.is_closed():
+            main_loop.call_soon_threadsafe(
+                lambda: [
+                    c.send(payload)
+                    for c in list(active_datachannels)
+                    if c.readyState == "open"
+                ]
+            )
+            
+    def battery_callback(self, msg):
+        if not active_datachannels:
+            return
+        payload = json.dumps(
+            {
+                "type": "battery",
+                "value": round(msg.percentage * 100, 1)
+                if msg.percentage <= 1.0
+                else round(msg.percentage, 1),
+            }
+        )
+
+        global main_loop
+        if main_loop and not main_loop.is_closed():
+            main_loop.call_soon_threadsafe(
+                lambda: [
+                    c.send(payload)
+                    for c in list(active_datachannels)
+                    if c.readyState == "open"
+                ]
+            )
+
+    def path_callback(self, msg):
+        if not active_datachannels:
+            return
+
+        # 💡 네트워크 오버헤드를 줄이기 위해 전체 경로 좌표 중 5개당 1개씩만 샘플링(Downsampling)하여 압축
+        sampled_poses = msg.poses[::5]
+
+        payload = json.dumps(
+            {
+                "type": "path",
+                "poses": [
+                    {"x": float(p.pose.position.x), "y": float(p.pose.position.y)}
+                    for p in sampled_poses
+                ],
+            }
+        )
+
+        global main_loop
+        if main_loop and not main_loop.is_closed():
+            main_loop.call_soon_threadsafe(
+                lambda: [
+                    c.send(payload)
+                    for c in list(active_datachannels)
+                    if c.readyState == "open"
+                ]
+            )
+
+    def image_callback(self, msg):
+        global latest_frame
+        try:
+            with frame_lock:
+                latest_frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+                # latest_frame = self.bridge.compressed_imgmsg_to_cv2(
+                #     msg, desired_encoding="bgr8"
+                # )
+        except Exception:
+            pass
+
+
+async def handle_offer(request):
+    params = await request.json()
+    pc = RTCPeerConnection()
+    pcs.add(pc)
+    pc.addTrack(RosImageTrack())
+
+    @pc.on("datachannel")
+    def on_datachannel(channel):
+        active_datachannels.add(channel)
+
+        @channel.on("close")
+        def on_close():
+            active_datachannels.discard(channel)
+
+    @pc.on("connectionstatechange")
+    async def on_state():
+        if pc.connectionState in ("failed", "closed"):
+            pcs.discard(pc)
+            await pc.close()
+
+    await pc.setRemoteDescription(
+        RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+    )
+    answer = await pc.createAnswer()
+    await pc.setLocalDescription(answer)
+
+    # [CORS 설정] Access-Control-Allow-Headers에 Content-Type을 명시적으로 허용해 줍니다.
+    return web.Response(
+        content_type="application/json",
+        text=json.dumps(
+            {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
+        ),
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+        },
+    )
+
+async def handle_options(request):
+    return web.Response(
+        status=200, 
+        headers={
+            "Access-Control-Allow-Origin": "*", 
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Allow-Methods": "POST, OPTIONS"
+        }
+    )
+
+def main():
+    global main_loop, _ROBOT_ID
+    main_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(main_loop)
+
+    rclpy.init(args=sys.argv)
+    node = WebrtcBridge()
+    _ROBOT_ID = node.robot_id
+
+    threading.Thread(target=rclpy.spin, args=(node,), daemon=True).start()
+    app = web.Application()
+    app.router.add_post("/offer", handle_offer)
+    app.router.add_options("/offer", handle_options)
+
+    try:
+        web.run_app(app, host="0.0.0.0", port=node.port, print=None)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.try_shutdown()
+
+
+if __name__ == "__main__":
+    main()
+
+=== File: bridge_ws/src/ares_bridges/ares_bridges/__init__.py ===
+
+
+=== File: bridge_ws/src/ares_bridges/ares_bridges/ai_vision_bridge.py ===
+
+#!/usr/bin/env python3
+import os
+import sys
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from sensor_msgs.msg import CompressedImage
+from cv_bridge import CvBridge
+import requests
+
+DATABASE_DIR = os.path.expanduser("~/rescue_amr_project/database")
+if DATABASE_DIR not in sys.path:
+    sys.path.append(DATABASE_DIR)
+
+from survivor_identity.face_identification.models import load_models
+from survivor_identity.face_identification.embedding import embed_image
+
+
+class AiVisionBridge(Node):  # 💡 클래스명 변경
+    def __init__(self):
+        super().__init__("ai_vision_bridge")
+        self.bridge = CvBridge()
+        self.declare_parameter("robot_id", "robot5")
+        self.robot_id = self.get_parameter("robot_id").value
+
+        self.get_logger().info("🧠 InsightFace(buffalo_l) 모델 로딩 중...")
+        self.models = load_models(model_name="buffalo_l", ctx_id=-1)
+
+        qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=5,
+        )
+
+        # 동적 로봇 ID 할당
+        topic_name = f"/{self.robot_id}/survivor/face_crop/compressed"
+        self.create_subscription(
+            CompressedImage, topic_name, self.crop_callback, qos_profile
+        )
+
+        self.flask_url = "http://127.0.0.1:8001/api/survivors/identify"
+        self.get_logger().info(f"📡 [AI 비전 브릿지] {topic_name} 수신 대기 중...")
+
+    def crop_callback(self, msg: CompressedImage):
+        try:
+            cv_image = self.bridge.compressed_imgmsg_to_cv2(
+                msg, desired_encoding="bgr8"
+            )
+            embedding = embed_image(
+                cv_image, self.models.recognition, self.models.landmark
+            )
+
+            if embedding is None:
+                return
+
+            res = requests.post(
+                self.flask_url, json={"vector": embedding.tolist()}, timeout=2.0
+            )
+            data = res.json()
+
+            if res.status_code == 200 and data.get("matched"):
+                user = data["data"]
+                self.get_logger().info(
+                    f"🎯 [DB 매칭 완료] {user['name']} 님 식별! (유사도: {user['similarity']}%)"
+                )
+        except Exception as e:
+            self.get_logger().error(f"❌ AI 연산 또는 통신 에러: {e}")
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = AiVisionBridge()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()
+
+=== File: bridge_ws/src/ares_bridges/ares_bridges/robot_status_bridge.py ===
+
+#!/usr/bin/env python3
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
+import requests
+import cv2
+import numpy as np
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
+from nav_msgs.msg import Odometry, OccupancyGrid  # 💡 OccupancyGrid 추가
+
+try:
+    from interfaces.msg import TargetPose
+
+    HAS_TARGET_POSE = True
+except ImportError:
+    HAS_TARGET_POSE = False
+    print(
+        "⚠️ [주의] interfaces/TargetPose 모듈이 없어 YOLO 탐지 DB 전송 기능이 비활성화됩니다."
+    )
+
+FLASK_BASE = "http://127.0.0.1:8001/api"
+
+
+def _extract_xy(msg, path: str):
+    obj = msg
+    for attr in path.split("."):
+        obj = getattr(obj, attr)
+    return float(obj.x), float(obj.y)
+
+
+class RobotStatusBridge(Node):
+    def __init__(self):
+        super().__init__("robot_status_bridge")
+        self.declare_parameter("robot_id", "robot5")
+        self.robot_id = self.get_parameter("robot_id").value
+
+        # 지도는 맵서버가 처음 열릴 때 과거 데이터를 들고 와야 하므로 transient_local 프로파일 적용
+        map_qos = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
+        sensor_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=5,
+        )
+
+        # ── 토픽 구독 ──────────────────────────────────────────────────────────
+        self.bt_sub = self.create_subscription(
+            PoseStamped,
+            f"/{self.robot_id}/report/survivor_found",
+            self.bt_report_callback,
+            10,
+        )
+
+        # 💡 [추가] 맵 토픽 구독 시작
+        self.map_sub = self.create_subscription(
+            OccupancyGrid, f"/{self.robot_id}/map", self.map_callback, map_qos
+        )
+
+        if HAS_TARGET_POSE:
+            self.yolo_sub = self.create_subscription(
+                TargetPose,
+                f"/{self.robot_id}/yolo/target_pose",
+                self.yolo_detection_callback,
+                qos_profile=sensor_qos,
+            )
+
+        self._pose_received = False
+        self._try_pose_topics(sensor_qos)
+        self.create_timer(1.0, self._pose_heartbeat)
+
+        self.get_logger().info(
+            f"✅ [로봇 상태 브릿지] 가동 완료 — robot_id={self.robot_id}"
+        )
+
+    # 💡 [추가] OccupancyGrid 토픽을 가로채서 이미지 바이너리로 백엔드 전송
+    def map_callback(self, msg: OccupancyGrid):
+        try:
+            width = msg.info.width
+            height = msg.info.height
+            if width == 0 or height == 0:
+                return
+
+            # 1. 1차원 데이터 배열을 2차원 넘파이 행렬로 재정렬
+            data = np.array(msg.data, dtype=np.int8).reshape((height, width))
+
+            # 2. 맵 데이터 값 규칙 매핑 (0: 빈공간->흰색, 100: 벽->검은색, -1: 미탐사->회색)
+            img = np.zeros((height, width), dtype=np.uint8)
+            img[data == 0] = 255  # 탐사 완료 영역 (White)
+            img[data == 100] = 0  # 벽/장애물 (Black)
+            img[data == -1] = 127  # 미탐사 구역 (Gray)
+
+            # 3. 데이터 시각적 가독성을 위해 상하 반전 (ROS 좌표계 -> OpenCV 이미지 좌표계 대응)
+            img = cv2.flip(img, 0)
+
+            # 4. 메모리 상에서 PNG 포맷으로 압축 이미지 인코딩
+            _, img_encoded = cv2.imencode(".png", img)
+
+            # 5. Flask 백엔드로 이미지 바이너리를 멀티파트 폼 데이터로 슛!
+            files = {
+                "map_image": (
+                    f"{self.robot_id}_map.png",
+                    img_encoded.tobytes(),
+                    "image/png",
+                )
+            }
+            requests.post(
+                f"{FLASK_BASE}/robots/{self.robot_id}/map", files=files, timeout=2.0
+            )
+
+            self.get_logger().info(
+                f"🎯 [지도 동기화] 백엔드로 실시간 맵 전송 성공 ({width}x{height})"
+            )
+        except Exception as e:
+            self.get_logger().error(f"❌ 지도 가공 및 전송 실패: {e}")
+
+    def _try_pose_topics(self, qos):
+        PRIORITY = [
+            (f"/{self.robot_id}/robot_pose", PoseStamped, "pose.position"),
+            (
+                f"/{self.robot_id}/amcl_pose",
+                PoseWithCovarianceStamped,
+                "pose.pose.position",
+            ),
+            (f"/{self.robot_id}/odom", Odometry, "pose.pose.position"),
+        ]
+        for topic, msg_type, path in PRIORITY:
+            try:
+                self.create_subscription(
+                    msg_type,
+                    topic,
+                    lambda msg, p=path: self._pose_callback(msg, p),
+                    qos_profile=qos,
+                )
+                self.get_logger().info(f"📍 위치 토픽 구독: {topic}")
+                break
+            except Exception:
+                pass
+
+    def _pose_callback(self, msg, path: str):
+        try:
+            self._last_x, self._last_y = _extract_xy(msg, path)
+            self._pose_received = True
+        except Exception:
+            pass
+
+    def _pose_heartbeat(self):
+        if self._pose_received:
+            self._send_to_flask(
+                f"{FLASK_BASE}/robots/{self.robot_id}/pose",
+                {"x": self._last_x, "y": self._last_y, "status": "MOVING"},
+                "위치",
+            )
+
+    def bt_report_callback(self, msg: PoseStamped):
+        data = {
+            "x": msg.pose.position.x,
+            "y": msg.pose.position.y,
+            "message": "[임무 성공] 생존자 확보",
+        }
+        self._send_to_flask(
+            f"{FLASK_BASE}/robots/{self.robot_id}/nav_success", data, "BT 임무완료"
+        )
+
+    def yolo_detection_callback(self, msg):
+        data = {
+            "id": msg.class_name,
+            "detected_x": msg.pose.position.x,
+            "detected_y": msg.pose.position.y,
+            "similarity": float(msg.confidence),
+            "robot_id": self.robot_id,
+        }
+        self._send_to_flask(f"{FLASK_BASE}/survivor-logs", data, "AI 식별")
+
+    def _send_to_flask(self, url, data, label):
+        try:
+            requests.post(url, json=data, timeout=1.0)
+        except Exception:
+            pass
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = RobotStatusBridge()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()

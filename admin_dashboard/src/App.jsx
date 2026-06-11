@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import AresLogin from "./AresLogin";
-import "./AresPages.css";
+import "./css/AresPages.css";
+import AresLogin from "./pages/AresLogin";
 import MonitorPage from "./pages/MonitorPage";
 import ReportPage from "./pages/ReportPage";
 import SyncPage from "./pages/SyncPage";

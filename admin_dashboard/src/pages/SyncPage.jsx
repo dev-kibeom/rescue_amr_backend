@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { navigate } from "../aresRouting";
+import { navigate } from "../router/aresRouting";
 
 export default function SyncPage() {
   const [status, setStatus] = useState({ total: 0, current: 0, message: "시스템 초기화 준비 중...", is_running: true });

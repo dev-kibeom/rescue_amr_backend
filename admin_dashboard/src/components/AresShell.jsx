@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { navigate } from "./aresRouting";
-import useClock from "./useClock";
+import useClock from "../hooks/useClock";
+import { navigate } from "../router/aresRouting";
 
 const navItems = [
   { route: "worker", icon: "ti-users", label: <>구조대상자<br />관리</> },
@@ -14,7 +14,6 @@ export default function AresShell({ route, title, subtitle, children }) {
 
   return (
     <div className="ares-app">
-      {/* 로그아웃 확인 다이얼로그 */}
       {showLogout && (
         <div className="logout-overlay" onClick={() => setShowLogout(false)}>
           <div className="logout-dialog" onClick={(e) => e.stopPropagation()}>
@@ -30,7 +29,6 @@ export default function AresShell({ route, title, subtitle, children }) {
       )}
 
       <aside className="ares-sidebar">
-        {/* 로고 — 클릭 비활성화 */}
         <div className="sidebar-logo">
           <span className="emblem">🚒</span>
           <span>ARES<br />관제</span>
