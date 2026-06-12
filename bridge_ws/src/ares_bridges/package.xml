@@ -3,14 +3,23 @@
 <package format="3">
   <name>ares_bridges</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>ARES Robot Backend Bridge Services</description>
   <maintainer email="neopkrrl@gmail.com">kibeom</maintainer>
-  <license>TODO: License declaration</license>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>setuptools</buildtool_depend>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+
+  <depend>rescue_interfaces</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>
-  <test_depend>python3-pytest</test_depend>
+  <test_depend>pytest</test_depend>
 
   <export>
     <build_type>ament_python</build_type>

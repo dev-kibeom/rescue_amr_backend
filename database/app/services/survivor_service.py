@@ -84,9 +84,9 @@ class SurvivorService:
                 )
 
                 # 유사도 기준점 검사
-                if float(result.similarity) < 95.0:
+                if float(result.similarity) < 10.0:
                     print(
-                        f"⚠️ [서비스 판단] 유사도({result.similarity:.1f}%)가 임계치(95.0%) 미만이므로 미식별 처리합니다.",
+                        f"⚠️ [서비스 판단] 유사도({result.similarity:.1f}%)가 임계치(10.0%) 미만이므로 미식별 처리합니다.",
                         flush=True,
                     )
                     return {

@@ -1,4 +1,3 @@
-// 1. 💡 최상단에 useRef를 추가로 불러옵니다.
 import { useEffect, useRef, useState } from "react";
 import AresShell from "../components/AresShell";
 import ErrorBoundary from "../components/ErrorBoundary";
@@ -9,9 +8,8 @@ import useClock from "../hooks/useClock";
 import useMonitor from "../hooks/useMonitor";
 import { navigate } from "../router/aresRouting";
 
-const WEBRTC_PORT = (idx) => 8002 + idx;
-// 💡 주소는 로컬 다이렉트 바인딩으로 유지합니다.
-const WEBRTC_BASE = (idx) => `http://localhost:8002`;
+// 💡 단일 게이트웨이 주소로 통일 (Docker 프록시 사용 시 "/webrtc" 권장)
+const WEBRTC_BASE = "http://localhost:8002";
 const ICE_SERVERS = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "turn:openrelay.metered.ca:80",   username: "openrelayproject", credential: "openrelayproject" },
@@ -39,12 +37,10 @@ function formatDuration(totalSeconds) {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-// 2. 💡 CameraPanel 컴포넌트 내부 완전 교체
-function CameraPanel({ title, tone, robotId, robotIndex, cameraTime, onTelemetry, shouldConnect }) {
+function CameraPanel({ title, tone, robotId, cameraTime, onTelemetry, shouldConnect }) {
   const [connState, setConnState] = useState("idle");
   const [videoEl, setVideoEl] = useState(null);
 
-  // 💡 [핵심 픽스 1]: 1초마다 바뀌는 함수를 ref로 캐싱하여 재렌더링 폭주를 막습니다.
   const onTelemetryRef = useRef(onTelemetry);
   useEffect(() => {
     onTelemetryRef.current = onTelemetry;
@@ -71,7 +67,6 @@ function CameraPanel({ title, tone, robotId, robotIndex, cameraTime, onTelemetry
         dataChannel.onmessage = (event) => {
           if (!active) return;
           const data = JSON.parse(event.data);
-          // 💡 캐싱된 ref를 통해 함수 호출
           if (onTelemetryRef.current) onTelemetryRef.current(robotId, data);
         };
 
@@ -102,13 +97,17 @@ function CameraPanel({ title, tone, robotId, robotIndex, cameraTime, onTelemetry
 
         let res;
         try {
-          res = await fetch(`${WEBRTC_BASE(robotIndex)}/offer`, {
+          res = await fetch(`${WEBRTC_BASE}/offer`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ sdp: offer.sdp, type: offer.type }),
+            body: JSON.stringify({ 
+              sdp: offer.sdp, 
+              type: offer.type,
+              robot_id: robotId 
+            }),
           });
         } catch (fetchErr) {
-          console.error("🚨 [WebRTC] Fetch 네트워크 연결 실패:", fetchErr);
+          console.error(`🚨 [WebRTC - ${robotId}] Fetch 네트워크 연결 실패:`, fetchErr);
           if (active) setConnState("error");
           if (peerConn) { peerConn.close(); peerConn = null; }
           return;
@@ -116,7 +115,7 @@ function CameraPanel({ title, tone, robotId, robotIndex, cameraTime, onTelemetry
 
         if (!res.ok) {
           const errText = await res.text();
-          console.error("🚨 [WebRTC] 서버 거부 코드:", res.status, errText);
+          console.error(`🚨 [WebRTC - ${robotId}] 서버 거부 코드:`, res.status, errText);
           throw new Error(`시그널링 실패: ${res.status}`);
         }
 
@@ -134,8 +133,7 @@ function CameraPanel({ title, tone, robotId, robotIndex, cameraTime, onTelemetry
       active = false;
       if (peerConn) { peerConn.close(); peerConn = null; }
     };
-  // 💡 [핵심 픽스 2]: 의존성 배열에서 onTelemetry를 제거하여 1초마다 철거되는 비극 차단!
-  }, [robotId, robotIndex, videoEl, shouldConnect]);
+  }, [robotId, videoEl, shouldConnect]);
 
   useEffect(() => {
     if (connState !== "error" || !shouldConnect) return;
@@ -191,6 +189,9 @@ export default function MonitorPage() {
     connStatus
   } = useMonitor();
 
+  // 💡 [실시간 게이지 전역 상태 추가] WebRTC로부터 넘어온 배율을 저장하는 독립 훅
+  const [exploredRatio, setExploredRatio] = useState(0);
+
   const getElapsed = () => {
     const t = sessionStorage.getItem("ares_login_time");
     return t ? Math.floor((Date.now() - Number(t)) / 1000) : 0;
@@ -203,8 +204,13 @@ export default function MonitorPage() {
     return () => clearInterval(id);
   }, []);
 
-  const MAP_RANGE = 20;
-  const toMapPct = (v) => v != null ? Math.min(95, Math.max(5, (v / MAP_RANGE) * 100)) : null;
+  const toMapPct = (val, isX = true) => {
+    if (val == null || isNaN(val)) return null;
+    const centerOffset = 10.0; 
+    const mapScale = 20.0;     
+    const pct = ((val + centerOffset) / mapScale) * 100;
+    return Math.min(92, Math.max(8, pct));
+  };
 
   const robotColor = (status) => ({
     IDLE: "var(--blue)",
@@ -358,14 +364,12 @@ export default function MonitorPage() {
             <hr className="divider" />
             <div className="ring-row" style={{ justifyContent: "center" }}>
               <Ring
-                percent={(() => {
-                  const withData = robots.filter(r => r.explored_area != null && r.total_area > 0);
-                  if (withData.length === 0) return null;
-                  const explored = withData.reduce((s, r) => s + r.explored_area, 0);
-                  const total    = withData.reduce((s, r) => s + r.total_area, 0);
-                  return Math.min(100, Math.round((explored / total) * 100));
-                })()}
-                tone="rescue" label="탐사" sub="탐사 완료율" size={76}
+                // 💡 [실시간 연동 사상]: 파이썬 노드가 DataChannel로 브로드캐스트한 탐사율을 실시간 반영
+                percent={exploredRatio > 0 ? Math.round(exploredRatio) : null}
+                tone="rescue" 
+                label="탐사" 
+                sub="탐사 완료율" 
+                size={76}
               />
             </div>
             <hr className="divider" />
@@ -400,9 +404,6 @@ export default function MonitorPage() {
           const canConnect = isRealRobot && robot.status !== "ERROR" && connStatus.db === "ok";
           const toneColor = idx === 0 ? "green" : "orange";
 
-          // 💡 [근본적 포트 싱크 매칭]: 문자열이나 순서에 구애받지 않고 실제 기동중인 robot5(포트 8002)로 다이렉트 픽스
-          const targetPortIndex = robotId.includes("robot5") ? 0 : idx;
-
           return (
             <section className="cell cam-cell" key={robotId}>
               <PanelHeader title={`카메라 · ${robotId}`} tone={toneColor} />
@@ -411,7 +412,6 @@ export default function MonitorPage() {
                   title={`카메라 · ${robotId}`}
                   tone={toneColor}
                   robotId={robotId}
-                  robotIndex={targetPortIndex} 
                   cameraTime={cameraTime}
                   shouldConnect={canConnect}
                   onTelemetry={(id, data) => {
@@ -419,7 +419,11 @@ export default function MonitorPage() {
                       setLiveTelemetry(id, data);
                     } else if (data.type === "camera_coverage") {
                       setCameraCoverage(id, data.points);
-                      setLiveTelemetry(id, data); 
+                    } 
+                    // 💡 [실시간 백엔드 트리거 매핑 완료]: 게이지 패킷을 상태 변수에 즉각 바이패스
+                    else if (data.type === "telemetry_update" && data.coverage_ratio !== undefined) {
+                      console.log("📈 [탐사 게이지 업데이트]:", data.coverage_ratio);
+                      setExploredRatio(data.coverage_ratio); 
                     }
                   }}
                 />

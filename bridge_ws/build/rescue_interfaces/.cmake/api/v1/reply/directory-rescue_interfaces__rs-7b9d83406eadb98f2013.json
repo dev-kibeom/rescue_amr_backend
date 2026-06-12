@@ -1,0 +1,14 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : [],
+		"files" : [],
+		"nodes" : []
+	},
+	"installers" : [],
+	"paths" : 
+	{
+		"build" : "rescue_interfaces__rs",
+		"source" : "/home/kibeom/rescue_amr_project/bridge_ws/build/rescue_interfaces/rescue_interfaces__rs"
+	}
+}

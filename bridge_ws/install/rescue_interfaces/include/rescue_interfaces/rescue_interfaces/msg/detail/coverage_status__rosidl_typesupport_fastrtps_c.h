@@ -1,0 +1,1 @@
+/home/kibeom/rescue_amr_project/bridge_ws/build/rescue_interfaces/rosidl_typesupport_fastrtps_c/rescue_interfaces/msg/detail/coverage_status__rosidl_typesupport_fastrtps_c.h

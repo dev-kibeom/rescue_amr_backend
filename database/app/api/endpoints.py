@@ -354,3 +354,52 @@ def add_survivor_log():
         return jsonify(res_body), status_code
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 400
+
+# =====================================================================
+# 6. [테스트 전용] 1:1 얼굴 이미지 유사도 비교 API
+# =====================================================================
+@api_bp.route("/face/compare", methods=["POST"])
+def compare_faces_test():
+    """GUI 테스트를 위해 사진 2장을 직접 받아 유사도를 즉시 반환"""
+    if "image1" not in request.files or "image2" not in request.files:
+        return jsonify({"error": "image1, image2 두 개의 파일이 필요합니다."}), 400
+
+    try:
+        from survivor_identity.face_identification.models import load_models
+        from survivor_identity.face_identification.embedding import embed_image
+        from numpy import dot
+        from numpy.linalg import norm
+
+        # 1. 전송받은 파일 읽기 및 OpenCV 디코딩
+        file1_bytes = request.files["image1"].read()
+        file2_bytes = request.files["image2"].read()
+
+        img1 = cv2.imdecode(np.frombuffer(file1_bytes, np.uint8), cv2.IMREAD_COLOR)
+        img2 = cv2.imdecode(np.frombuffer(file2_bytes, np.uint8), cv2.IMREAD_COLOR)
+
+        # 2. InsightFace 모델 로드 (테스트용)
+        models = load_models(model_name="buffalo_l", ctx_id=-1)
+
+        # 3. 512차원 임베딩 벡터 추출
+        emb1 = embed_image(img1, models.recognition, models.landmark)
+        emb2 = embed_image(img2, models.recognition, models.landmark)
+
+        if emb1 is None or emb2 is None:
+            return jsonify({"error": "이미지에서 얼굴을 찾을 수 없습니다."}), 400
+
+        # 4. 코사인 유사도(Cosine Similarity) 연산
+        similarity = dot(emb1, emb2) / (norm(emb1) * norm(emb2))
+
+        return jsonify(
+            {
+                "status": "success",
+                "similarity_score": round(float(similarity), 4),
+                "is_same_person": bool(
+                    similarity > 0.45
+                ),  # 0.45 이상이면 동일인으로 간주 (임계값)
+            }
+        ), 200
+
+    except Exception as e:
+        print(f"❌ [API] 얼굴 비교 연산 에러: {str(e)}", flush=True)
+        return jsonify({"error": str(e)}), 500

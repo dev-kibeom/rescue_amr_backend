@@ -1,51 +1,59 @@
+#!/usr/bin/env python3
+import os
 from launch import LaunchDescription
-from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+
 
 def generate_launch_description():
-    # 실행 시 로봇 ID를 동적으로 받을 수 있도록 설정 (기본값: robot5)
-    robot_id = LaunchConfiguration('robot_id', default='robot5')
+    # 💡 1. 런치 파라미터 정의 (팀원 PC 배포 및 더미 테스트 공용)
+    robot_id_arg = DeclareLaunchArgument(
+        "robot_id",
+        default_value="robot5",
+        description="Target Robot ID (e.g., robot1, robot2, robot5)",
+    )
 
-    return LaunchDescription([
-        DeclareLaunchArgument(
-            'robot_id',
-            default_value='robot5',
-            description='ID of the robot to bridge'
-        ),
-        
-        # 1. WebRTC 영상/데이터 스트리밍 브릿지
-        Node(
-            package='ares_bridges',
-            executable='webrtc_bridge',
-            name='webrtc_bridge',
-            output='screen',
-            parameters=[{
-                'port': 8002,
-                'topic': ['/', robot_id, '/survivor/annotated'], # 압축 토픽이 복구되면 /compressed 추가
-                'robot': robot_id
-            }]
-        ),
+    port_arg = DeclareLaunchArgument(
+        "port", default_value="8002", description="WebRTC Bridge Server Port"
+    )
 
-        # 2. 로봇 상태(배터리, 위치) 백엔드 동기화 브릿지
-        Node(
-            package='ares_bridges',
-            executable='robot_status_bridge',
-            name='robot_status_bridge',
-            output='screen',
-            parameters=[{
-                'robot_id': robot_id
-            }]
-        ),
+    robot_id = LaunchConfiguration("robot_id")
+    port = LaunchConfiguration("port")
 
-        # 3. AI 얼굴 크롭 이미지 백엔드 매칭 브릿지
-        Node(
-            package='ares_bridges',
-            executable='ai_vision_bridge',
-            name='ai_vision_bridge',
-            output='screen',
-            parameters=[{
-                'robot_id': robot_id
-            }]
-        ),
-    ])
+    # 💡 2. WebRTC 다이렉트 브릿지 노드 (방금 정비한 1:1 구조)
+    webrtc_bridge_node = Node(
+        package="ares_bridges",
+        executable="webrtc_bridge",
+        name="webrtc_bridge_gateway",
+        parameters=[{"robot_id": robot_id, "port": port}],
+        output="screen",
+    )
+
+    # 💡 3. 로봇 상태 및 위치 중계 노드
+    robot_status_bridge_node = Node(
+        package="ares_bridges",
+        executable="robot_status_bridge",
+        name="robot_status_bridge",
+        parameters=[{"robot_id": robot_id}],
+        output="screen",
+    )
+
+    # 💡 4. AI 비전 데이터 바이패스 노드
+    ai_vision_bridge_node = Node(
+        package="ares_bridges",
+        executable="ai_vision_bridge",
+        name="ai_vision_bridge",
+        parameters=[{"robot_id": robot_id}],
+        output="screen",
+    )
+
+    return LaunchDescription(
+        [
+            robot_id_arg,
+            port_arg,
+            webrtc_bridge_node,
+            robot_status_bridge_node,
+            ai_vision_bridge_node,
+        ]
+    )

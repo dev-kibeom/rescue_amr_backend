@@ -3,26 +3,33 @@
 =========================================
 bridge_ws/
 └── src
-    └── ares_bridges
-        ├── ares_bridges
-        │   ├── ai_vision_bridge.py
-        │   ├── ares_dummy_teleop.py
-        │   ├── __init__.py
-        │   ├── robot_status_bridge.py
-        │   └── webrtc_bridge.py
-        ├── launch
-        │   └── ares_bridge.launch.py
-        ├── package.xml
-        ├── resource
-        │   └── ares_bridges
-        ├── setup.cfg
-        ├── setup.py
-        └── test
-            ├── test_copyright.py
-            ├── test_flake8.py
-            └── test_pep257.py
+    ├── ares_bridges
+    │   ├── ares_bridges
+    │   │   ├── ai_vision_bridge.py
+    │   │   ├── ares_dummy_teleop.py
+    │   │   ├── __init__.py
+    │   │   ├── robot_status_bridge.py
+    │   │   └── webrtc_bridge.py
+    │   ├── launch
+    │   │   └── ares_bridge.launch.py
+    │   ├── package.xml
+    │   ├── resource
+    │   │   └── ares_bridges
+    │   ├── setup.cfg
+    │   ├── setup.py
+    │   └── test
+    │       ├── test_copyright.py
+    │       ├── test_flake8.py
+    │       └── test_pep257.py
+    └── rescue_interfaces
+        ├── CMakeLists.txt
+        ├── include
+        │   └── rescue_interfaces
+        ├── msg
+        │   └── CoverageStatus.msg
+        └── package.xml
 
-6 directories, 13 files
+10 directories, 16 files
 
 
 
@@ -124,83 +131,88 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
-        # 💡 런치 파일이 빌드 시 포함되도록 추가
-        (
-            os.path.join("share", package_name, "launch"),
-            glob(os.path.join("launch", "*launch.[pxy][yma]*")),
-        ),
+        # 🚀 런치 폴더가 정상적으로 share 폴더로 복사되도록 설정
+        (os.path.join("share", package_name, "launch"), glob("launch/*.launch.py")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
     maintainer="kibeom",
-    maintainer_email="devkibeom@gmail.com",
-    description="ARES Project: Standalone Communication Bridges",
+    maintainer_email="neopkrrl@gmail.com",
+    description="ARES Robot Backend Bridge Services",
     license="TODO: License declaration",
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [
-            # 💡 3개의 브릿지 노드를 터미널 명령어(executable)로 등록
-            "webrtc_bridge = ares_bridges.webrtc_bridge:main",
-            "robot_status_bridge = ares_bridges.robot_status_bridge:main",
+            # 💡 실행파일명 = 패키지폴더명.소스파일명:진입함수명
             "ai_vision_bridge = ares_bridges.ai_vision_bridge:main",
             "ares_dummy_teleop = ares_bridges.ares_dummy_teleop:main",
+            "robot_status_bridge = ares_bridges.robot_status_bridge:main",
+            "webrtc_bridge = ares_bridges.webrtc_bridge:main",
         ],
     },
 )
 
 === File: bridge_ws/src/ares_bridges/launch/ares_bridge.launch.py ===
 
+#!/usr/bin/env python3
+import os
 from launch import LaunchDescription
-from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+
 
 def generate_launch_description():
-    # 실행 시 로봇 ID를 동적으로 받을 수 있도록 설정 (기본값: robot5)
-    robot_id = LaunchConfiguration('robot_id', default='robot5')
+    # 💡 1. 런치 파라미터 정의 (팀원 PC 배포 및 더미 테스트 공용)
+    robot_id_arg = DeclareLaunchArgument(
+        "robot_id",
+        default_value="robot5",
+        description="Target Robot ID (e.g., robot1, robot2, robot5)",
+    )
 
-    return LaunchDescription([
-        DeclareLaunchArgument(
-            'robot_id',
-            default_value='robot5',
-            description='ID of the robot to bridge'
-        ),
-        
-        # 1. WebRTC 영상/데이터 스트리밍 브릿지
-        Node(
-            package='ares_bridges',
-            executable='webrtc_bridge',
-            name='webrtc_bridge',
-            output='screen',
-            parameters=[{
-                'port': 8002,
-                'topic': ['/', robot_id, '/survivor/annotated'], # 압축 토픽이 복구되면 /compressed 추가
-                'robot': robot_id
-            }]
-        ),
+    port_arg = DeclareLaunchArgument(
+        "port", default_value="8002", description="WebRTC Bridge Server Port"
+    )
 
-        # 2. 로봇 상태(배터리, 위치) 백엔드 동기화 브릿지
-        Node(
-            package='ares_bridges',
-            executable='robot_status_bridge',
-            name='robot_status_bridge',
-            output='screen',
-            parameters=[{
-                'robot_id': robot_id
-            }]
-        ),
+    robot_id = LaunchConfiguration("robot_id")
+    port = LaunchConfiguration("port")
 
-        # 3. AI 얼굴 크롭 이미지 백엔드 매칭 브릿지
-        Node(
-            package='ares_bridges',
-            executable='ai_vision_bridge',
-            name='ai_vision_bridge',
-            output='screen',
-            parameters=[{
-                'robot_id': robot_id
-            }]
-        ),
-    ])
+    # 💡 2. WebRTC 다이렉트 브릿지 노드 (방금 정비한 1:1 구조)
+    webrtc_bridge_node = Node(
+        package="ares_bridges",
+        executable="webrtc_bridge",
+        name="webrtc_bridge_gateway",
+        parameters=[{"robot_id": robot_id, "port": port}],
+        output="screen",
+    )
+
+    # 💡 3. 로봇 상태 및 위치 중계 노드
+    robot_status_bridge_node = Node(
+        package="ares_bridges",
+        executable="robot_status_bridge",
+        name="robot_status_bridge",
+        parameters=[{"robot_id": robot_id}],
+        output="screen",
+    )
+
+    # 💡 4. AI 비전 데이터 바이패스 노드
+    ai_vision_bridge_node = Node(
+        package="ares_bridges",
+        executable="ai_vision_bridge",
+        name="ai_vision_bridge",
+        parameters=[{"robot_id": robot_id}],
+        output="screen",
+    )
+
+    return LaunchDescription(
+        [
+            robot_id_arg,
+            port_arg,
+            webrtc_bridge_node,
+            robot_status_bridge_node,
+            ai_vision_bridge_node,
+        ]
+    )
 
 === File: bridge_ws/src/ares_bridges/ares_bridges/webrtc_bridge.py ===
 
@@ -208,53 +220,49 @@ def generate_launch_description():
 import numpy as np
 import asyncio, json, cv2, sys, threading
 from fractions import Fraction
+from collections import defaultdict
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 
-from nav_msgs.msg import Path
-from nav_msgs.msg import OccupancyGrid
-from sensor_msgs.msg import Image, CompressedImage, BatteryState
-
+from nav_msgs.msg import Path, OccupancyGrid
+from sensor_msgs.msg import Image, BatteryState
 from cv_bridge import CvBridge
 from aiohttp import web
 from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription
 from av import VideoFrame
 
-latest_frame = None
-frame_lock = threading.Lock()
+# 💡 다중 로봇 상태 분리 구조 유지 (싱글 배포 시에도 안전)
+latest_frames = {}
+frame_locks = defaultdict(threading.Lock)
+active_datachannels = defaultdict(set)
 pcs = set()
-active_datachannels = set()
-_ROBOT_ID = "robot1"
 main_loop = None
 
 
-class RosImageTrack(MediaStreamTrack):
+class RosDynamicImageTrack(MediaStreamTrack):
     kind = "video"
 
-    def __init__(self):
+    def __init__(self, robot_id):
         super().__init__()
+        self.robot_id = robot_id
         self._start_time = None
         self._pts = 0
         self._pts_step = max(1, int(90000 * (1.0 / 15.0)))
 
     async def recv(self):
-        global latest_frame
         loop = asyncio.get_event_loop()
         if self._start_time is None:
             self._start_time = loop.time()
-
         self._pts += self._pts_step
         await asyncio.sleep(
             max(0, (self._start_time + (self._pts / 90000)) - loop.time())
         )
 
-        with frame_lock:
-            img = (
-                latest_frame
-                if latest_frame is not None
-                else np.zeros((480, 640, 3), dtype=np.uint8)
-            )
+        with frame_locks[self.robot_id]:
+            img = latest_frames.get(self.robot_id)
+            if img is None:
+                img = np.zeros((480, 640, 3), dtype=np.uint8)
 
         frame = VideoFrame.from_ndarray(
             cv2.cvtColor(img, cv2.COLOR_BGR2RGB), format="rgb24"
@@ -263,165 +271,174 @@ class RosImageTrack(MediaStreamTrack):
         return frame
 
 
-class WebrtcBridge(Node):
+class WebrtcBridgeGateway(Node):
     def __init__(self):
-        super().__init__("webrtc_bridge")
+        super().__init__("webrtc_bridge_gateway")
         self.bridge = CvBridge()
+
+        # 💡 파라미터로 자신의 로봇 ID와 포트를 유동적으로 받음
+        self.declare_parameter("robot_id", "robot5")
         self.declare_parameter("port", 8002)
-        self.declare_parameter("topic", "/robot5/survivor/annotated")
-        self.declare_parameter("robot", "robot5")
 
+        self.robot_id = self.get_parameter("robot_id").value
         self.port = self.get_parameter("port").value
-        self.topic_name = self.get_parameter("topic").value
-        self.robot_id = self.get_parameter("robot").value
 
-        qos = QoSProfile(
-            reliability=ReliabilityPolicy.BEST_EFFORT,
+        # QoS 프로파일 세팅
+        nav2_compatible_qos = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
             history=HistoryPolicy.KEEP_LAST,
-            depth=1,
+            depth=5,
+        )
+        sensor_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=5,
         )
 
-        image_qos = QoSProfile(
-            reliability=ReliabilityPolicy.BEST_EFFORT,
-            history=HistoryPolicy.KEEP_LAST,
-            depth=2,
-        )
+        latest_frames[self.robot_id] = None
+
+        # 🎯 [Import 에러 안전 가드]: 인터페이스 패키지가 아직 로드되지 않았을 때를 대비한 런타임 예외 처리
+        try:
+            from rescue_interfaces.msg import CoverageStatus
+
+            # 💡 플래너 배율 감시선 연결 (인터페이스 로드 성공 시에만 구독 개통)
+            self.create_subscription(
+                CoverageStatus,
+                f"/{self.robot_id}/coverage/status",
+                self.coverage_status_callback,
+                10,
+            )
+            self.get_logger().info(
+                "✅ [인터페이스 매핑] rescue_interfaces/msg/CoverageStatus 바인딩 완료"
+            )
+        except ImportError as e:
+            self.get_logger().error(
+                f"❌ [Import 에러] rescue_interfaces를 찾을 수 없습니다! "
+                f"package.xml의 <depend> 설정을 확인하세요. 에러 원인: {e}"
+            )
 
         self.create_subscription(
-            Image, self.topic_name, self.image_callback, image_qos
+            Image,
+            f"/{self.robot_id}/survivor/annotated",
+            self.image_callback,
+            sensor_qos,
         )
         self.create_subscription(
             BatteryState, f"/{self.robot_id}/battery_state", self.battery_callback, 10
         )
-
         self.create_subscription(
-            Path, f"/{self.robot_id}/coverage/path", self.path_callback, 10
+            Path,
+            f"/{self.robot_id}/coverage/path",
+            self.path_callback,
+            nav2_compatible_qos,
         )
-
         self.create_subscription(
             OccupancyGrid,
             f"/{self.robot_id}/camera_coverage",
             self.coverage_callback,
-            qos,
+            sensor_qos,
         )
 
         self.get_logger().info(
-            f"👀 [WebRTC 브릿지] 가동2! 포트: {self.port}, 토픽: {self.topic_name}"
+            f"⚙️ [1:1 다이렉트 브릿지] 타겟 로봇 세팅 완료: {self.robot_id}"
         )
-    
-    def coverage_callback(self, msg: OccupancyGrid):
-        if not active_datachannels:
-            return
 
-        width = msg.info.width
-        height = msg.info.height
-        res = msg.info.resolution
-        origin_x = msg.info.origin.position.x
-        origin_y = msg.info.origin.position.y
+    def coverage_callback(self, msg):
+        """로봇의 실시간 커버리지 격자 지도 파싱 및 웹소켓 단독 토스"""
+        try:
+            width, height = msg.info.width, msg.info.height
+            if len(msg.data) == 0:
+                return
 
-        data = np.array(msg.data, dtype=np.int8).reshape((height, width))
+            grid = np.array(msg.data, dtype=np.int8).reshape((height, width))
+            y_indices, x_indices = np.where(grid == 100)
 
-        # 💡 값이 100(카메라가 훑고 지나간 영역)인 인덱스만 싹 골라내기
-        y_indices, x_indices = np.where(data == 100)
+            coverage_points = []
+            sample_rate = max(1, len(x_indices) // 300)
 
-        # 데이터 다이어트를 위해 최대 200개까지만 샘플링하여 대역폭 보호
-        step = max(1, len(x_indices) // 200)
-        sampled_x = x_indices[::step]
-        sampled_y = y_indices[::step]
+            for i in range(0, len(x_indices), sample_rate):
+                rx = msg.info.origin.position.x + x_indices[i] * msg.info.resolution
+                ry = msg.info.origin.position.y + y_indices[i] * msg.info.resolution
+                coverage_points.append({"x": float(rx), "y": float(ry)})
 
-        # 인덱스 좌표 -> 실제 ROS2 평면 미터(m) 좌표로 역연산 변환
-        coverage_points = []
-        for sx, sy in zip(sampled_x, sampled_y):
-            real_x = origin_x + (sx * res)
-            real_y = origin_y + (sy * res)
-            coverage_points.append({"x": float(real_x), "y": float(real_y)})
+            if not active_datachannels[self.robot_id]:
+                return
 
-        payload = json.dumps({"type": "camera_coverage", "points": coverage_points})
-
-        global main_loop
-        if main_loop and not main_loop.is_closed():
-            main_loop.call_soon_threadsafe(
-                lambda: [
-                    c.send(payload)
-                    for c in list(active_datachannels)
-                    if c.readyState == "open"
-                ]
+            self._broadcast_json(
+                self.robot_id, {"type": "camera_coverage", "points": coverage_points}
             )
-            
+        except Exception as e:
+            self.get_logger().error(f"❌ 커버리지 파싱 크래시: {e}")
+
     def battery_callback(self, msg):
-        if not active_datachannels:
-            return
-        payload = json.dumps(
-            {
-                "type": "battery",
-                "value": round(msg.percentage * 100, 1)
-                if msg.percentage <= 1.0
-                else round(msg.percentage, 1),
-            }
+        val = (
+            round(msg.percentage * 100, 1)
+            if msg.percentage <= 1.0
+            else round(msg.percentage, 1)
         )
-
-        global main_loop
-        if main_loop and not main_loop.is_closed():
-            main_loop.call_soon_threadsafe(
-                lambda: [
-                    c.send(payload)
-                    for c in list(active_datachannels)
-                    if c.readyState == "open"
-                ]
-            )
+        self._broadcast_json(self.robot_id, {"type": "battery", "value": val})
 
     def path_callback(self, msg):
-        if not active_datachannels:
-            return
-
-        # 💡 네트워크 오버헤드를 줄이기 위해 전체 경로 좌표 중 5개당 1개씩만 샘플링(Downsampling)하여 압축
         sampled_poses = msg.poses[::5]
+        poses_data = [
+            {"x": float(p.pose.position.x), "y": float(p.pose.position.y)}
+            for p in sampled_poses
+        ]
+        self._broadcast_json(self.robot_id, {"type": "path", "poses": poses_data})
 
-        payload = json.dumps(
-            {
-                "type": "path",
-                "poses": [
-                    {"x": float(p.pose.position.x), "y": float(p.pose.position.y)}
-                    for p in sampled_poses
-                ],
-            }
-        )
+    def image_callback(self, msg):
+        try:
+            with frame_locks[self.robot_id]:
+                latest_frames[self.robot_id] = self.bridge.imgmsg_to_cv2(
+                    msg, desired_encoding="bgr8"
+                )
+        except Exception:
+            pass
 
+    def coverage_status_callback(self, msg):
+        """
+        명세서 3.4절 규격: 로봇 플래너가 던지는 탐사 배율 수집
+        msg.coverage_ratio 형식 (0.0 ~ 1.0) -> 대시보드 전용 백분율(%)로 가공
+        """
+        try:
+            pct_value = round(msg.coverage_ratio * 100, 1)
+            self._broadcast_json(
+                self.robot_id, {"type": "telemetry_update", "coverage_ratio": pct_value}
+            )
+        except Exception as e:
+            self.get_logger().error(f"❌ 탐사 완료율 처리 오류: {e}")
+
+    def _broadcast_json(self, robot_id: str, data: dict):
+        if not active_datachannels[robot_id]:
+            return
+        payload = json.dumps(data)
         global main_loop
         if main_loop and not main_loop.is_closed():
             main_loop.call_soon_threadsafe(
                 lambda: [
                     c.send(payload)
-                    for c in list(active_datachannels)
+                    for c in list(active_datachannels[robot_id])
                     if c.readyState == "open"
                 ]
             )
-
-    def image_callback(self, msg):
-        global latest_frame
-        try:
-            with frame_lock:
-                latest_frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
-                # latest_frame = self.bridge.compressed_imgmsg_to_cv2(
-                #     msg, desired_encoding="bgr8"
-                # )
-        except Exception:
-            pass
 
 
 async def handle_offer(request):
     params = await request.json()
+    target_robot_id = params.get("robot_id", "robot5")  # 프론트엔드가 요청한 ID 매핑
     pc = RTCPeerConnection()
     pcs.add(pc)
-    pc.addTrack(RosImageTrack())
+    pc.addTrack(RosDynamicImageTrack(robot_id=target_robot_id))
 
     @pc.on("datachannel")
     def on_datachannel(channel):
-        active_datachannels.add(channel)
+        active_datachannels[target_robot_id].add(channel)
 
         @channel.on("close")
         def on_close():
-            active_datachannels.discard(channel)
+            active_datachannels[target_robot_id].discard(channel)
 
     @pc.on("connectionstatechange")
     async def on_state():
@@ -434,8 +451,6 @@ async def handle_offer(request):
     )
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
-
-    # [CORS 설정] Access-Control-Allow-Headers에 Content-Type을 명시적으로 허용해 줍니다.
     return web.Response(
         content_type="application/json",
         text=json.dumps(
@@ -443,35 +458,33 @@ async def handle_offer(request):
         ),
         headers={
             "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Allow-Headers": "Content-Type",
             "Access-Control-Allow-Methods": "POST, OPTIONS",
         },
     )
 
+
 async def handle_options(request):
     return web.Response(
-        status=200, 
+        status=200,
         headers={
-            "Access-Control-Allow-Origin": "*", 
-            "Access-Control-Allow-Headers": "Content-Type, Authorization",
-            "Access-Control-Allow-Methods": "POST, OPTIONS"
-        }
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Content-Type",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+        },
     )
 
+
 def main():
-    global main_loop, _ROBOT_ID
+    global main_loop
     main_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(main_loop)
-
     rclpy.init(args=sys.argv)
-    node = WebrtcBridge()
-    _ROBOT_ID = node.robot_id
-
+    node = WebrtcBridgeGateway()
     threading.Thread(target=rclpy.spin, args=(node,), daemon=True).start()
     app = web.Application()
     app.router.add_post("/offer", handle_offer)
     app.router.add_options("/offer", handle_options)
-
     try:
         web.run_app(app, host="0.0.0.0", port=node.port, print=None)
     except KeyboardInterrupt:
@@ -490,9 +503,11 @@ if __name__ == "__main__":
 import rclpy
 from rclpy.node import Node
 import numpy as np
-import math
+import math, cv2, random, requests
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import OccupancyGrid, Path
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 
 
@@ -500,24 +515,31 @@ class AresDummyTeleop(Node):
     def __init__(self):
         super().__init__("ares_dummy_teleop")
         self.declare_parameter("robot_id", "robot5")
-        self.robot_id = self.get_parameter("robot_id").value
+        self.declare_parameter("backend_ip", "127.0.0.1")
 
-        # 💡 [핵심 교정]: 브릿지 노드와 결합할 TRANSIENT_LOCAL 프로파일 명시적 정의
+        self.robot_id = self.get_parameter("robot_id").value
+        self.backend_ip = self.get_parameter("backend_ip").value
+
+        self.bridge = CvBridge()
+        # 💡 API 엔드포인트 세팅
+        self.identify_url = f"http://{self.backend_ip}:8001/api/survivors/identify"
+        self.pose_url = f"http://{self.backend_ip}:8001/api/robots/{self.robot_id}/pose"
+        self.log_url = (
+            f"http://{self.backend_ip}:8001/api/survivor-logs"  # 💡 추가: DB 기록용 API
+        )
+
         map_qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
-            durability=DurabilityPolicy.TRANSIENT_LOCAL,  # 👈 일시적 보존 설정으로 통일
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
         )
-
         sensor_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
-            durability=DurabilityPolicy.VOLATILE,
             history=HistoryPolicy.KEEP_LAST,
             depth=5,
         )
 
-        # 💡 보정된 QoS 프로파일을 기반으로 퍼블리셔 등록
         self.map_pub = self.create_publisher(
             OccupancyGrid, f"/{self.robot_id}/map", map_qos
         )
@@ -527,76 +549,210 @@ class AresDummyTeleop(Node):
         self.cov_pub = self.create_publisher(
             OccupancyGrid, f"/{self.robot_id}/camera_coverage", sensor_qos
         )
+        self.image_pub = self.create_publisher(
+            Image, f"/{self.robot_id}/survivor/annotated", sensor_qos
+        )
 
-        self.map_width = 100
-        self.map_height = 100
-        self.resolution = 0.2
+        self.map_width, self.map_height, self.resolution = 100, 100, 0.2
         self.map_data = np.full((self.map_height, self.map_width), -1, dtype=np.int8)
-
-        self.map_data[30:35, 20:70] = 100
-        self.map_data[65:70, 40:90] = 100
-
-        self.robot_x = 2.0
-        self.robot_y = 2.0
-        self.angle = 0.0
+        self.map_data[35:38, 20:65] = 100
+        self.robot_x, self.robot_y, self.angle = 2.0, 2.0, 0.0
         self.path_msg = Path()
         self.path_msg.header.frame_id = "map"
 
+        self.detection_timer = 0
+        self.current_bbox = (0, 0, 0, 0)
+        self.current_label = ""
+        self.current_color = (0, 255, 0)
+
         self.create_timer(0.3, self.update_simulation)
         self.get_logger().info(
-            f"🎮 [더미노드 QoS 보정] 가동 완료 - {self.robot_id} 토픽 스트리밍 시작"
+            f"🚀 [멀티 로봇 더미] 가동 완료2! (로봇: {self.robot_id})"
         )
 
     def update_simulation(self):
-        self.angle += 0.05
-        self.robot_x += 0.15 * math.cos(self.angle)
-        self.robot_y += 0.15 * math.sin(self.angle)
+        try:
+            stamp = self.get_clock().now().to_msg()
 
-        grid_x = int(self.robot_x / self.resolution)
-        grid_y = int(self.robot_y / self.resolution)
+            # ─── 0. 백엔드 DB에 생존 신고 (프론트엔드 카메라 잠금 해제 유지) ───
+            try:
+                requests.post(
+                    self.pose_url,
+                    json={
+                        "x": self.robot_x,
+                        "y": self.robot_y,
+                        "status": "MOVING",
+                        "battery": 92,
+                    },
+                    timeout=0.2,
+                )
+            except:
+                pass
 
-        for dy in range(-6, 7):
-            for dx in range(-6, 7):
-                nx, ny = grid_x + dx, grid_y + dy
-                if 0 <= nx < self.map_width and 0 <= ny < self.map_height:
-                    if dx * dx + dy * dy <= 36 and self.map_data[ny, nx] != 100:
-                        self.map_data[ny, nx] = 0
+            # ─── 1. 로봇 주행 및 실시간 맵 개척 ───
+            self.angle += 0.05
+            self.robot_x += 0.18 * math.cos(self.angle)
+            self.robot_y += 0.18 * math.sin(self.angle)
+            grid_x, grid_y = (
+                int(self.robot_x / self.resolution),
+                int(self.robot_y / self.resolution),
+            )
 
-        stamp = self.get_clock().now().to_msg()
+            for dy in range(-6, 7):
+                for dx in range(-6, 7):
+                    nx, ny = grid_x + dx, grid_y + dy
+                    if 0 <= nx < self.map_width and 0 <= ny < self.map_height:
+                        if dx * dx + dy * dy <= 36 and self.map_data[ny, nx] != 100:
+                            self.map_data[ny, nx] = 0
 
-        map_msg = OccupancyGrid()
-        map_msg.header.stamp = stamp
-        map_msg.header.frame_id = "map"
-        map_msg.info.resolution = self.resolution
-        map_msg.info.width = self.map_width
-        map_msg.info.height = self.map_height
-        map_msg.data = self.map_data.flatten().tolist()
-        self.map_pub.publish(map_msg)
+            # ─── 2. YOLO 카메라 에뮬레이터 & DB 로깅 ───
+            cam_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            cam_frame[:] = (20, 25, 30)
+            for i in range(1, 4):
+                cv2.line(cam_frame, (0, i * 120), (640, i * 120), (40, 45, 45), 1)
 
-        pose_stamped = PoseStamped()
-        pose_stamped.header.stamp = stamp
-        pose_stamped.pose.position.x = self.robot_x
-        pose_stamped.pose.position.y = self.robot_y
-        self.path_msg.poses.append(pose_stamped)
-        self.path_pub.publish(self.path_msg)
+            if self.detection_timer <= 0:
+                if random.random() < 0.10:
+                    self.detection_timer = 10
+                    bx, by = random.randint(150, 350), random.randint(100, 250)
+                    self.current_bbox = (
+                        bx,
+                        by,
+                        bx + random.randint(120, 180),
+                        by + random.randint(160, 220),
+                    )
 
-        # 5. camera_coverage (가시 범위 음영) 실제 미터 좌표계 기반 역연산 매핑으로 보정
-        cov_msg = OccupancyGrid()
-        cov_msg.header.stamp = stamp
-        cov_msg.header.frame_id = "map"
-        cov_msg.info.resolution = self.resolution
-        cov_msg.info.width = self.map_width
-        cov_msg.info.height = self.map_height
+                    is_known = random.choice([True, False])
+                    if is_known:
+                        mock_vector = [
+                            round(random.uniform(0.85, 0.95), 4)
+                            if i == 0
+                            else round(random.uniform(0, 0.1), 4)
+                            for i in range(512)
+                        ]
+                    else:
+                        mock_vector = [
+                            round(random.uniform(0.4, 0.6), 4) for _ in range(512)
+                        ]
 
-        cov_data = np.zeros_like(self.map_data)
-        # 로봇 현재 인덱스 기준 주변만 마킹
-        for dy in range(-3, 4):
-            for dx in range(-3, 4):
-                nx, ny = grid_x + dx, grid_y + dy
-                if 0 <= nx < self.map_width and 0 <= ny < self.map_height:
-                    cov_data[ny, nx] = 100
-        cov_msg.data = cov_data.flatten().tolist()
-        self.cov_pub.publish(cov_msg)
+                    try:
+                        # 1단계: 백엔드에 누구인지 식별 요청
+                        res = requests.post(
+                            self.identify_url, json={"vector": mock_vector}, timeout=1.0
+                        )
+                        data = res.json()
+
+                        log_payload = {
+                            "detected_x": round(self.robot_x, 2),
+                            "detected_y": round(self.robot_y, 2),
+                            "robot_id": self.robot_id,
+                            "img_path": "",
+                        }
+
+                        if res.status_code == 200 and data.get("matched"):
+                            user = data["data"]
+                            self.current_label = (
+                                f"SURVIVOR: {user['name']} ({user['similarity']}%)"
+                            )
+                            self.current_color = (46, 204, 113)
+                            self.get_logger().info(
+                                f"🎯 [매칭 성공] {user['name']} 님 포착!"
+                            )
+
+                            # 매칭 성공 기록용 데이터 세팅
+                            log_payload["id"] = user["id"]
+                            log_payload["similarity"] = (
+                                float(user["similarity"]) / 100.0
+                            )
+                        else:
+                            self.current_label = "UNKNOWN SURVIVOR"
+                            self.current_color = (0, 165, 255)
+                            self.get_logger().warn(f"❓ [미식별] 미상 인원 포착")
+
+                            # 미식별 기록용 데이터 세팅
+                            log_payload["id"] = None
+                            log_payload["similarity"] = 0.5
+
+                        # 💡 2단계: 식별 결과를 DB에 정식 인시던트 로그로 삽입 (대시보드 갱신 트리거)
+                        requests.post(self.log_url, json=log_payload, timeout=1.0)
+
+                    except Exception as e:
+                        self.get_logger().error(f"통신 에러: {e}")
+
+            if self.detection_timer > 0:
+                self.detection_timer -= 1
+                x1, y1, x2, y2 = self.current_bbox
+                cv2.rectangle(cam_frame, (x1, y1), (x2, y2), self.current_color, 2)
+                cv2.rectangle(
+                    cam_frame, (x1, y1 - 25), (x1 + 300, y1), self.current_color, -1
+                )
+                cv2.putText(
+                    cam_frame,
+                    self.current_label,
+                    (x1 + 5, y1 - 7),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0, 0, 0),
+                    2,
+                )
+                cv2.line(
+                    cam_frame,
+                    (x1, int((y1 + y2) / 2)),
+                    (x2, int((y1 + y2) / 2)),
+                    self.current_color,
+                    1,
+                )
+
+            img_msg = self.bridge.cv2_to_imgmsg(cam_frame, encoding="bgr8")
+            img_msg.header.stamp = stamp
+            img_msg.header.frame_id = "camera_link"
+            self.image_pub.publish(img_msg)
+
+            # ─── 3. 데이터 토픽 송출 ───
+            map_msg = OccupancyGrid()
+            map_msg.header.stamp = stamp
+            map_msg.header.frame_id = "map"
+            map_msg.info.resolution = self.resolution
+            map_msg.info.width = self.map_width
+            map_msg.info.height = self.map_height
+            map_msg.data = self.map_data.flatten().tolist()
+            self.map_pub.publish(map_msg)
+
+            pose_stamped = PoseStamped()
+            pose_stamped.header.stamp = stamp
+            pose_stamped.pose.position.x = self.robot_x
+            pose_stamped.pose.position.y = self.robot_y
+            self.path_msg.poses.append(pose_stamped)
+            self.path_pub.publish(self.path_msg)
+
+            # ─── 💡 [커버리지 실시간 표시 픽스 포인트] ───
+            cov_msg = OccupancyGrid()
+            cov_msg.header.stamp = stamp
+            cov_msg.header.frame_id = "map"
+
+            # 실제 실습장 전역 맵의 해상도와 스케일을 일치시킵니다.
+            cov_msg.info.resolution = self.resolution
+            cov_msg.info.width = self.map_width
+            cov_msg.info.height = self.map_height
+
+            # 맵 전체를 미탐사(-1)로 채운 뒤 로봇 주변만 100(포착 구역)으로 오버레이
+            cov_data = np.full_like(self.map_data, -1, dtype=np.int8)
+
+            # 🎯 로봇 반경 3셀(대략 60cm 전방 시야)을 실시간 스캔 영역으로 마킹
+            for dy in range(-3, 4):
+                for dx in range(-3, 4):
+                    nx, ny = grid_x + dx, grid_y + dy
+                    if 0 <= nx < self.map_width and 0 <= ny < self.map_height:
+                        if dx * dx + dy * dy <= 9:  # 원형 센서 범위 산출
+                            cov_data[ny, nx] = (
+                                100  # 대시보드가 수신할 점사 타겟 시야 시그널
+                            )
+
+            cov_msg.data = cov_data.flatten().tolist()
+            self.cov_pub.publish(cov_msg)
+
+        except Exception as e:
+            pass
 
 
 def main(args=None):

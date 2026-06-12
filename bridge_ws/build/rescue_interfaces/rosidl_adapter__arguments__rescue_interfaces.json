@@ -1,0 +1,6 @@
+{
+  "package_name": "rescue_interfaces",
+  "non_idl_tuples": [
+    "/home/kibeom/rescue_amr_project/bridge_ws/src/rescue_interfaces:msg/CoverageStatus.msg"
+  ]
+}

@@ -1,0 +1,28 @@
+// generated from rosidl_adapter/resource/msg.idl.em
+// with input from rescue_interfaces/msg/CoverageStatus.msg
+// generated code does not contain a copyright notice
+
+#include "geometry_msgs/msg/PoseStamped.idl"
+#include "std_msgs/msg/Header.idl"
+
+module rescue_interfaces {
+  module msg {
+    struct CoverageStatus {
+      std_msgs::msg::Header header;
+
+      string mode;
+
+      string state;
+
+      uint32 total_goals;
+
+      uint32 visited_goals;
+
+      float coverage_ratio;
+
+      geometry_msgs::msg::PoseStamped current_goal;
+
+      string message;
+    };
+  };
+};

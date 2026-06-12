@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
-import numpy as np
-import math
-from geometry_msgs.msg import PoseStamped
-from nav_msgs.msg import OccupancyGrid, Path
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
+import sys
+import random
+
+# 💡 방금 성공적으로 빌드한 커스텀 인터페이스 및 표준 메시지 임포트
+from rescue_interfaces.msg import CoverageStatus
+from nav_msgs.msg import Path, OccupancyGrid
+from sensor_msgs.msg import Image, BatteryState
+from geometry_msgs.msg import PoseStamped
+import std_msgs.msg
 
 
 class AresDummyTeleop(Node):
     def __init__(self):
         super().__init__("ares_dummy_teleop")
+
+        # 💡 CLI 인자 또는 런치 파라미터 파싱
         self.declare_parameter("robot_id", "robot5")
         self.robot_id = self.get_parameter("robot_id").value
 
-        # 💡 [핵심 교정]: 브릿지 노드와 결합할 TRANSIENT_LOCAL 프로파일 명시적 정의
-        map_qos = QoSProfile(
-            reliability=ReliabilityPolicy.RELIABLE,
-            durability=DurabilityPolicy.TRANSIENT_LOCAL,  # 👈 일시적 보존 설정으로 통일
-            history=HistoryPolicy.KEEP_LAST,
-            depth=1,
-        )
-
+        # 주파수 및 내구성 매칭용 QoS 설정
         sensor_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.VOLATILE,
@@ -29,94 +29,110 @@ class AresDummyTeleop(Node):
             depth=5,
         )
 
-        # 💡 보정된 QoS 프로파일을 기반으로 퍼블리셔 등록
-        self.map_pub = self.create_publisher(
-            OccupancyGrid, f"/{self.robot_id}/map", map_qos
+        # 🎯 명세서 3.4절 커버리지 상태 퍼블리셔 등록
+        self.status_pub = self.create_publisher(
+            CoverageStatus, f"/{self.robot_id}/coverage/status", 10
         )
-        self.path_pub = self.create_publisher(
-            Path, f"/{self.robot_id}/coverage/path", map_qos
+
+        # 백업용 센서 퍼블리셔들 등록 (혼선 방지용 최소화)
+        self.battery_pub = self.create_publisher(
+            BatteryState, f"/{self.robot_id}/battery_state", 10
         )
-        self.cov_pub = self.create_publisher(
+        self.cov_map_pub = self.create_publisher(
             OccupancyGrid, f"/{self.robot_id}/camera_coverage", sensor_qos
         )
 
-        self.map_width = 100
-        self.map_height = 100
-        self.resolution = 0.2
-        self.map_data = np.full((self.map_height, self.map_width), -1, dtype=np.int8)
+        # 더미 시뮬레이션용 가상 상태 상태 변수
+        self.total_goals = 120
+        self.visited_goals = 0
+        self.current_ratio = 0.0
+        self.battery_level = 100.0
 
-        self.map_data[30:35, 20:70] = 100
-        self.map_data[65:70, 40:90] = 100
+        # 0.5초 주기로 정밀 데이터 펌핑 실행
+        self.create_timer(0.5, self.publish_dummy_data)
 
-        self.robot_x = 2.0
-        self.robot_y = 2.0
-        self.angle = 0.0
-        self.path_msg = Path()
-        self.path_msg.header.frame_id = "map"
-
-        self.create_timer(0.3, self.update_simulation)
         self.get_logger().info(
-            f"🎮 [더미노드 QoS 보정] 가동 완료 - {self.robot_id} 토픽 스트리밍 시작"
+            f"🚀 [ARES 커스텀 더미 에이전트] 가동 완료! 타겟 맵핑: {self.robot_id}"
         )
 
-    def update_simulation(self):
-        self.angle += 0.05
-        self.robot_x += 0.15 * math.cos(self.angle)
-        self.robot_y += 0.15 * math.sin(self.angle)
+    def publish_dummy_data(self):
+        # ─── 1. CoverageStatus 커스텀 규격 데이터 생성 ───
+        status_msg = CoverageStatus()
 
-        grid_x = int(self.robot_x / self.resolution)
-        grid_y = int(self.robot_y / self.resolution)
+        # Header 주입
+        status_msg.header = std_msgs.msg.Header()
+        status_msg.header.stamp = self.get_clock().now().to_msg()
+        status_msg.header.frame_id = "map"
 
-        for dy in range(-6, 7):
-            for dx in range(-6, 7):
-                nx, ny = grid_x + dx, grid_y + dy
-                if 0 <= nx < self.map_width and 0 <= ny < self.map_height:
-                    if dx * dx + dy * dy <= 36 and self.map_data[ny, nx] != 100:
-                        self.map_data[ny, nx] = 0
+        # 단순 문자열 상태값 설정
+        status_msg.mode = "AUTONOMOUS"
+        status_msg.state = "EXPLORING"
+        status_msg.message = "영역 개척 및 구조대상자 탐색 수행 중"
 
-        stamp = self.get_clock().now().to_msg()
+        # 💡 시연 효과를 위해 타이머 돌 때마다 탐사 배율 점진적 상승 연산
+        if self.visited_goals < self.total_goals:
+            self.visited_goals += random.choice([0, 1, 2])
+            if self.visited_goals > self.total_goals:
+                self.visited_goals = self.total_goals
 
+        # 백분율이 아닌 0.0 ~ 1.0 규격으로 주입 (브릿지 노드에서 * 100 가공함)
+        self.current_ratio = float(self.visited_goals) / float(self.total_goals)
+
+        status_msg.total_goals = self.total_goals
+        status_msg.visited_goals = self.visited_goals
+        status_msg.coverage_ratio = self.current_ratio
+
+        # 현재 목표지 가상 좌표 주입 (geometry_msgs/PoseStamped)
+        goal_pose = PoseStamped()
+        goal_pose.header = status_msg.header
+        goal_pose.pose.position.x = 1.5 + (self.current_ratio * 5)
+        goal_pose.pose.position.y = -2.3 + (self.current_ratio * 3)
+        status_msg.current_goal = goal_pose
+
+        # 🎯 최종 퍼블리시
+        self.status_pub.publish(status_msg)
+
+        # ─── 2. 배터리 및 지도 커버리지 백업 데이터 동시 펌핑 ───
+        bat_msg = BatteryState()
+        self.battery_level = max(15.0, self.battery_level - 0.05)
+        bat_msg.percentage = self.battery_level / 100.0
+        self.battery_pub.publish(bat_msg)
+
+        # 강제 카메라 커버리지 격자 생성 (100x100)
         map_msg = OccupancyGrid()
-        map_msg.header.stamp = stamp
-        map_msg.header.frame_id = "map"
-        map_msg.info.resolution = self.resolution
-        map_msg.info.width = self.map_width
-        map_msg.info.height = self.map_height
-        map_msg.data = self.map_data.flatten().tolist()
-        self.map_pub.publish(map_msg)
+        map_msg.header = status_msg.header
+        map_msg.info.resolution = 0.05
+        map_msg.info.width = 100
+        map_msg.info.height = 100
+        map_msg.info.origin.position.x = -2.5
+        map_msg.info.origin.position.y = -2.5
 
-        pose_stamped = PoseStamped()
-        pose_stamped.header.stamp = stamp
-        pose_stamped.pose.position.x = self.robot_x
-        pose_stamped.pose.position.y = self.robot_y
-        self.path_msg.poses.append(pose_stamped)
-        self.path_pub.publish(self.path_msg)
+        # 가상으로 탐사된 인덱스(값: 100) 무작위 채우기
+        grid_data = [-1] * 10000
+        fill_count = int(self.current_ratio * 3000)
+        for _ in range(fill_count):
+            idx = random.randint(0, 9999)
+            grid_data[idx] = 100
+        map_msg.data = grid_data
+        self.cov_map_pub.publish(map_msg)
 
-        # 5. camera_coverage (가시 범위 음영) 실제 미터 좌표계 기반 역연산 매핑으로 보정
-        cov_msg = OccupancyGrid()
-        cov_msg.header.stamp = stamp
-        cov_msg.header.frame_id = "map"
-        cov_msg.info.resolution = self.resolution
-        cov_msg.info.width = self.map_width
-        cov_msg.info.height = self.map_height
-
-        cov_data = np.zeros_like(self.map_data)
-        # 로봇 현재 인덱스 기준 주변만 마킹
-        for dy in range(-3, 4):
-            for dx in range(-3, 4):
-                nx, ny = grid_x + dx, grid_y + dy
-                if 0 <= nx < self.map_width and 0 <= ny < self.map_height:
-                    cov_data[ny, nx] = 100
-        cov_msg.data = cov_data.flatten().tolist()
-        self.cov_pub.publish(cov_msg)
+        # 디버깅 터미널 확인용 출력
+        self.get_logger().info(
+            f"📥 [더미 송신] 목표 달성: {status_msg.visited_goals}/{status_msg.total_goals} "
+            f"({round(self.current_ratio * 100, 1)}%)"
+        )
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = AresDummyTeleop()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.try_shutdown()
 
 
 if __name__ == "__main__":
